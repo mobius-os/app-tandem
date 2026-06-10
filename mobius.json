@@ -1,0 +1,31 @@
+{
+  "id": "tandem",
+  "name": "Tandem",
+  "version": "0.1.0",
+  "description": "Parallel bilingual stories for language learning. The agent generates a story in two languages side-by-side; tap any word to see its paired meaning.",
+  "offline_capable": true,
+  "author": "mobius-os",
+  "license": "MIT",
+  "homepage": "https://github.com/mobius-os/app-tandem",
+  "icon": "icon.png",
+  "entry": "index.jsx",
+  "theme_color": "#0c0f14",
+  "background_color": "#0c0f14",
+  "permissions": {
+    "cross_app_access": "none",
+    "share_with_apps": "none"
+  },
+  "storage_seeds": {
+    "system-prompt.md": "system-prompt.md"
+  },
+  "schedule": {
+    "job": "generate.sh"
+  },
+  "runtime": {
+    "imports": [
+      "react",
+      "react-dom"
+    ],
+    "esm_deps": []
+  }
+}
