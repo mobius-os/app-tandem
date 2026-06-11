@@ -125,7 +125,7 @@ if isinstance(history, list):
     elif score < 0:
         level = CEFR[max(idx - 1, 0)]
 
-# Read topic and mode from next_request if present.
+# Read topic, mode, and optional language override from next_request if present.
 next_req = prefs.get("next_request") or {}
 if not isinstance(next_req, dict):
     next_req = {}
@@ -133,6 +133,13 @@ topic = (next_req.get("topic") or "").strip()
 mode = (next_req.get("mode") or "free").strip()
 if mode not in ("free", "classic", "daily_life", "travel"):
     mode = "free"
+# Allow per-generate language override (from the generate sheet)
+req_lang_a = (next_req.get("lang_a") or "").strip()
+req_lang_b = (next_req.get("lang_b") or "").strip()
+if req_lang_a:
+    lang_a = req_lang_a
+if req_lang_b:
+    lang_b = req_lang_b
 
 print(f"{lang_a}\t{lang_b}\t{level}\t{topic}\t{mode}")
 PY
@@ -221,15 +228,19 @@ CEFR = ["A1", "A2", "B1", "B2", "C1", "C2"]
 with open(raw_path, encoding="utf-8", errors="replace") as f:
     raw = f.read()
 
-# Find the first JSON object in the output (agent may wrap in prose).
-match = re.search(r'\{[\s\S]*\}', raw)
-if not match:
+# Strip markdown code fences if the model wrapped the JSON.
+# Then find the first { ... last } span.
+raw_stripped = re.sub(r'```(?:json)?\s*', '', raw).strip()
+first_brace = raw_stripped.find('{')
+last_brace = raw_stripped.rfind('}')
+if first_brace == -1 or last_brace == -1 or last_brace <= first_brace:
     print("", end="")
     sys.exit(2)
+candidate = raw_stripped[first_brace:last_brace + 1]
 
 try:
-    story = json.loads(match.group(0))
-except json.JSONDecodeError as e:
+    story = json.loads(candidate)
+except json.JSONDecodeError:
     print("", end="")
     sys.exit(2)
 
@@ -256,7 +267,7 @@ if not title_a or not title_b:
     sys.exit(2)
 
 paragraphs = story.get("paragraphs") or []
-if not isinstance(paragraphs, list) or len(paragraphs) < 10:
+if not isinstance(paragraphs, list):
     sys.exit(2)
 
 # Normalise paragraphs + glossary.
@@ -283,7 +294,7 @@ for p in paragraphs:
         glossary.append(entry)
     clean_paragraphs.append({"a": a, "b": b, "glossary": glossary})
 
-if len(clean_paragraphs) < 10:
+if len(clean_paragraphs) < 1:
     sys.exit(2)
 
 story["paragraphs"] = clean_paragraphs

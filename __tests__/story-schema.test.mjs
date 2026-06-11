@@ -35,7 +35,7 @@ test('inlined schema in index.jsx stays in sync with story-schema.mjs', () => {
     "if (typeof entry.word_b === 'string' && entry.word_b.toLowerCase().includes(needle)) return true",
     "const level = CEFR_LEVELS.includes(story.level) ? story.level : 'B1'",
     "id: story.id,",
-    "if (paragraphs.length < 10) return null",
+    "if (paragraphs.length < 1) return null",
     "return story.paragraphs.reduce((n, p) => n + (Array.isArray(p.glossary) ? p.glossary.length : 0), 0)",
     "return story.paragraphs.length >= 10 && totalGlossaryCount(story) >= 15",
   ]
@@ -209,9 +209,17 @@ test('normalizeStory returns null when paragraphs is empty after filtering', () 
   assert.equal(normalizeStory({ ...GOOD_STORY, paragraphs: [{ a: '', b: 'x' }] }), null)
 })
 
-test('normalizeStory returns null when fewer than 10 paragraphs', () => {
-  const ninePara = Array.from({ length: 9 }, () => ({ ...BASE_PARA }))
-  assert.equal(normalizeStory({ ...GOOD_STORY, paragraphs: ninePara }), null)
+test('normalizeStory accepts a story with fewer than 10 paragraphs (lenient read)', () => {
+  const threePara = Array.from({ length: 3 }, () => ({ ...BASE_PARA, glossary: [...BASE_PARA.glossary] }))
+  const s = normalizeStory({ ...GOOD_STORY, paragraphs: threePara })
+  assert.ok(s, 'expected non-null for 3-paragraph story')
+  assert.equal(s.paragraphs.length, 3)
+})
+
+test('normalizeStory returns null when paragraphs reduce to 0 valid entries', () => {
+  // All paragraphs have missing a or b → all dropped → 0 valid → null
+  const badParas = Array.from({ length: 5 }, () => ({ a: '', b: 'something', glossary: [] }))
+  assert.equal(normalizeStory({ ...GOOD_STORY, paragraphs: badParas }), null)
 })
 
 test('normalizeStory defaults level to B1 for an unknown CEFR value', () => {
@@ -319,6 +327,15 @@ test('meetsContentBar returns true at the exact boundary (10 paras, 15 entries)'
     })),
   }
   assert.equal(meetsContentBar(story), true)
+})
+
+test('meetsContentBar returns false for a valid normalized 3-paragraph story', () => {
+  const threePara = Array.from({ length: 3 }, () => ({
+    ...BASE_PARA, glossary: [...BASE_PARA.glossary],
+  }))
+  const s = normalizeStory({ ...GOOD_STORY, paragraphs: threePara })
+  assert.ok(s)
+  assert.equal(meetsContentBar(s), false)
 })
 
 // ---------------------------------------------------------------------------

@@ -74,7 +74,7 @@ export function normalizeStory(story) {
     }
     paragraphs.push({ a, b, glossary })
   }
-  if (paragraphs.length < 10) return null
+  if (paragraphs.length < 1) return null
   return { id, title_a, title_b, lang_a, lang_b, level, created, paragraphs }
 }
 

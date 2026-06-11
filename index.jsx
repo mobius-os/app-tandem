@@ -67,7 +67,7 @@ function normalizeStory(story) {
     }
     paragraphs.push({ a, b, glossary })
   }
-  if (paragraphs.length < 10) return null
+  if (paragraphs.length < 1) return null
   return { id, title_a, title_b, lang_a, lang_b, level, created, paragraphs }
 }
 
@@ -1034,9 +1034,11 @@ function StoryReader({ story, prefs, appId, token, onClose, onFeedback }) {
 // ---------------------------------------------------------------------------
 // GenerateSheet — bottom sheet for choosing story topic + mode before generating.
 // ---------------------------------------------------------------------------
-function GenerateSheet({ onGenerate, onCancel }) {
+function GenerateSheet({ onGenerate, onCancel, initialLangA, initialLangB }) {
   const [topicInput, setTopicInput] = useState('')
   const [selectedMode, setSelectedMode] = useState(null)
+  const [langA, setLangA] = useState(initialLangA || 'English')
+  const [langB, setLangB] = useState(initialLangB || '')
 
   const CHIPS = [
     { label: 'Surprise me', mode: 'free' },
@@ -1050,13 +1052,40 @@ function GenerateSheet({ onGenerate, onCancel }) {
   }
 
   const handleGenerate = () => {
-    onGenerate({ topic: topicInput.trim(), mode: selectedMode || 'free' })
+    onGenerate({
+      topic: topicInput.trim(),
+      mode: selectedMode || 'free',
+      lang_a: langA.trim() || (initialLangA || 'English'),
+      lang_b: langB.trim() || (initialLangB || ''),
+    })
   }
 
   return (
     <div className="tn-scrim" onClick={onCancel} role="dialog" aria-modal="true" aria-label="Generate story">
       <div className="tn-sheet" onClick={(e) => e.stopPropagation()}>
         <p className="tn-sheet-title">Generate a story</p>
+        <div>
+          <label className="tn-setup-label" htmlFor="tn-gen-lang-a">Language you know</label>
+          <input
+            id="tn-gen-lang-a"
+            className="tn-input"
+            value={langA}
+            onChange={(e) => setLangA(e.target.value)}
+            placeholder="e.g. English"
+            autoComplete="off"
+          />
+        </div>
+        <div>
+          <label className="tn-setup-label" htmlFor="tn-gen-lang-b">Language you're learning</label>
+          <input
+            id="tn-gen-lang-b"
+            className="tn-input"
+            value={langB}
+            onChange={(e) => setLangB(e.target.value)}
+            placeholder="e.g. Spanish, French, Japanese"
+            autoComplete="off"
+          />
+        </div>
         <div>
           <label className="tn-setup-label" htmlFor="tn-gen-topic">Topic (optional)</label>
           <input
@@ -1219,10 +1248,18 @@ function LibraryTab({ appId, token, online, prefs, onPrefsChange }) {
     }, 4000)
   }, [appId, token, index])
 
-  const handleSheetGenerate = useCallback(async ({ topic, mode }) => {
+  const handleSheetGenerate = useCallback(async ({ topic, mode, lang_a, lang_b }) => {
     setShowGenerateSheet(false)
-    // Save topic + mode to prefs as next_request; generate.sh will read and clear it
-    const next = { ...prefs, next_request: { topic, mode } }
+    // Persist lang choice back to prefs so next sheet opens with same defaults.
+    // Also save next_request (topic, mode, langs) so generate.sh can use them.
+    const updatedLangA = lang_a || prefs.lang_a
+    const updatedLangB = lang_b || prefs.lang_b
+    const next = {
+      ...prefs,
+      lang_a: updatedLangA,
+      lang_b: updatedLangB,
+      next_request: { topic, mode, lang_a: updatedLangA, lang_b: updatedLangB },
+    }
     onPrefsChange(next)
     await savePrefs(appId, token, next)
     handleGenerate()
@@ -1303,6 +1340,8 @@ function LibraryTab({ appId, token, online, prefs, onPrefsChange }) {
         <GenerateSheet
           onGenerate={handleSheetGenerate}
           onCancel={() => setShowGenerateSheet(false)}
+          initialLangA={prefs.lang_a}
+          initialLangB={prefs.lang_b}
         />
       )}
 
