@@ -74,8 +74,20 @@ export function normalizeStory(story) {
     }
     paragraphs.push({ a, b, glossary })
   }
-  if (paragraphs.length === 0) return null
+  if (paragraphs.length < 10) return null
   return { id, title_a, title_b, lang_a, lang_b, level, created, paragraphs }
+}
+
+// Total glossary entries across all paragraphs
+export function totalGlossaryCount(story) {
+  if (!story || !Array.isArray(story.paragraphs)) return 0
+  return story.paragraphs.reduce((n, p) => n + (Array.isArray(p.glossary) ? p.glossary.length : 0), 0)
+}
+
+// Whether the story meets minimum content bar (≥10 paragraphs, ≥15 total glossary entries)
+export function meetsContentBar(story) {
+  if (!story) return false
+  return story.paragraphs.length >= 10 && totalGlossaryCount(story) >= 15
 }
 
 // Build a normalized index entry from a story (for storing in stories/index.json).

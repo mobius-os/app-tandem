@@ -1,0 +1,117 @@
+// Unit tests for scroll-sync helpers. Run with:
+//   node --test __tests__/scroll-sync.test.mjs
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { computeSyncScrollTop, computeParaOffsets } from '../scroll-sync.mjs'
+
+// ---------------------------------------------------------------------------
+// computeSyncScrollTop
+// ---------------------------------------------------------------------------
+test('computeSyncScrollTop returns null when srcOffsets is null', () => {
+  const dst = [{ top: 0, height: 100 }]
+  assert.equal(computeSyncScrollTop(0, null, dst), null)
+})
+
+test('computeSyncScrollTop returns null when dstOffsets is null', () => {
+  const src = [{ top: 0, height: 100 }]
+  assert.equal(computeSyncScrollTop(0, src, null), null)
+})
+
+test('computeSyncScrollTop returns null when arrays have different lengths', () => {
+  const src = [{ top: 0, height: 100 }, { top: 100, height: 100 }]
+  const dst = [{ top: 0, height: 200 }]
+  assert.equal(computeSyncScrollTop(0, src, dst), null)
+})
+
+test('computeSyncScrollTop returns null for empty arrays', () => {
+  assert.equal(computeSyncScrollTop(0, [], []), null)
+})
+
+test('computeSyncScrollTop at scrollTop=0 with identical offsets returns 0', () => {
+  const offsets = [{ top: 0, height: 100 }, { top: 100, height: 100 }]
+  const result = computeSyncScrollTop(0, offsets, offsets)
+  assert.equal(result, 0)
+})
+
+test('computeSyncScrollTop simple mapping: para 0, frac=0.5, dst double height', () => {
+  // src: 2 paras at 100px each; dst: 2 paras at 200px each
+  const src = [{ top: 0, height: 100 }, { top: 100, height: 100 }]
+  const dst = [{ top: 0, height: 200 }, { top: 200, height: 200 }]
+  // scrollTop=50 → anchor=0, frac=0.5 → target = 0 + 0.5*200 = 100
+  assert.equal(computeSyncScrollTop(50, src, dst), 100)
+})
+
+test('computeSyncScrollTop scrolled past first para: anchor is para 1', () => {
+  const src = [{ top: 0, height: 100 }, { top: 100, height: 100 }]
+  const dst = [{ top: 0, height: 200 }, { top: 200, height: 200 }]
+  // scrollTop=150 → anchor=1 (150 >= 100), frac=(150-100)/100=0.5 → target=200+0.5*200=300
+  assert.equal(computeSyncScrollTop(150, src, dst), 300)
+})
+
+test('computeSyncScrollTop at the very start of para 1 (frac=0)', () => {
+  const src = [{ top: 0, height: 100 }, { top: 100, height: 100 }]
+  const dst = [{ top: 0, height: 200 }, { top: 200, height: 200 }]
+  // scrollTop=100 → anchor=1, frac=0 → target=200
+  assert.equal(computeSyncScrollTop(100, src, dst), 200)
+})
+
+test('computeSyncScrollTop beyond last para top still returns a valid number', () => {
+  const src = [{ top: 0, height: 100 }, { top: 100, height: 100 }]
+  const dst = [{ top: 0, height: 200 }, { top: 200, height: 200 }]
+  // scrollTop=9999 → anchor=1 (last), frac clamped to 1 → target=200+200=400
+  const result = computeSyncScrollTop(9999, src, dst)
+  assert.equal(typeof result, 'number')
+  assert.ok(result >= 200)
+})
+
+test('computeSyncScrollTop handles a single paragraph', () => {
+  const src = [{ top: 0, height: 150 }]
+  const dst = [{ top: 0, height: 300 }]
+  // frac = 75/150 = 0.5 → target = 0 + 0.5*300 = 150
+  assert.equal(computeSyncScrollTop(75, src, dst), 150)
+})
+
+// ---------------------------------------------------------------------------
+// computeParaOffsets
+// ---------------------------------------------------------------------------
+test('computeParaOffsets returns null if any ref is null', () => {
+  const refs = [
+    { current: { offsetTop: 0, offsetHeight: 100 } },
+    null,
+  ]
+  assert.equal(computeParaOffsets(refs), null)
+})
+
+test('computeParaOffsets returns null if any ref.current is null', () => {
+  const refs = [
+    { current: { offsetTop: 0, offsetHeight: 100 } },
+    { current: null },
+  ]
+  assert.equal(computeParaOffsets(refs), null)
+})
+
+test('computeParaOffsets returns empty array for empty refs', () => {
+  assert.deepEqual(computeParaOffsets([]), [])
+})
+
+test('computeParaOffsets returns correct top and height from mock elements', () => {
+  const refs = [
+    { current: { offsetTop: 0, offsetHeight: 80 } },
+    { current: { offsetTop: 80, offsetHeight: 120 } },
+    { current: { offsetTop: 200, offsetHeight: 60 } },
+  ]
+  const result = computeParaOffsets(refs)
+  assert.deepEqual(result, [
+    { top: 0, height: 80 },
+    { top: 80, height: 120 },
+    { top: 200, height: 60 },
+  ])
+})
+
+test('computeParaOffsets uses 1 as minimum height when offsetHeight is 0', () => {
+  const refs = [
+    { current: { offsetTop: 0, offsetHeight: 0 } },
+  ]
+  const result = computeParaOffsets(refs)
+  assert.deepEqual(result, [{ top: 0, height: 1 }])
+})

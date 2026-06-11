@@ -7,15 +7,17 @@
 #
 # What it does:
 #   1. Loads the service token and reads prefs.json (target language, base language,
-#      CEFR level). Applies feedback_history to adapt the requested level.
-#   2. Reads system-prompt.md (baked schema, role + output format) and appends the
+#      CEFR level, topic, mode). Applies feedback_history to adapt the requested level.
+#   2a. Fetches recent story titles to avoid repeats.
+#   2b. Reads system-prompt.md (baked schema, role + output format) and appends the
 #      generation parameters as a trailing section.
 #   3. Runs the Claude CLI with NO tools — the output is pure JSON from the model's
 #      reasoning alone. No web search; stories are fictional.
 #   4. Extracts the JSON story object from stdout and validates it minimally.
 #   5. Writes stories/<id>.json and updates stories/index.json.
-#   6. Sends a push notification on success.
-#   7. Logs to /data/cron-logs/tandem.log
+#   6. Clears next_request from prefs so the next generation reverts to free mode.
+#   7. Sends a push notification on success.
+#   8. Logs to /data/cron-logs/tandem.log
 
 set -uo pipefail
 
@@ -74,13 +76,14 @@ if [ "$SYS_CODE" != "200" ]; then
   exit 1
 fi
 
-# 2. Read prefs.json for language pair, level, and feedback history.
+# 2. Read prefs.json for language pair, level, feedback history, topic, mode.
 PREFS_FILE="$WORK_DIR/prefs.json"
 PREFS_CODE=$(curl -sS -o "$PREFS_FILE" -w "%{http_code}" \
   -H "Authorization: Bearer $SERVICE_TOKEN" \
   "$API_BASE_URL/api/storage/apps/$APP_ID/prefs.json") || PREFS_CODE=000
 
 # Parse prefs; fall back to English/Spanish B1 defaults.
+# Output 5 tab-separated fields: lang_a, lang_b, level, topic, mode
 PARAMS=$(python3 - "$PREFS_FILE" "$PREFS_CODE" <<'PY'
 import json
 import sys
@@ -122,14 +125,45 @@ if isinstance(history, list):
     elif score < 0:
         level = CEFR[max(idx - 1, 0)]
 
-print(f"{lang_a}\t{lang_b}\t{level}")
+# Read topic and mode from next_request if present.
+next_req = prefs.get("next_request") or {}
+if not isinstance(next_req, dict):
+    next_req = {}
+topic = (next_req.get("topic") or "").strip()
+mode = (next_req.get("mode") or "free").strip()
+if mode not in ("free", "classic", "daily_life", "travel"):
+    mode = "free"
+
+print(f"{lang_a}\t{lang_b}\t{level}\t{topic}\t{mode}")
 PY
 )
 LANG_A="${PARAMS%%$'\t'*}"
-REST="${PARAMS#*$'\t'}"
-LANG_B="${REST%%$'\t'*}"
-LEVEL="${REST#*$'\t'}"
-log "Generating level=$LEVEL story: $LANG_A / $LANG_B"
+REST1="${PARAMS#*$'\t'}"
+LANG_B="${REST1%%$'\t'*}"
+REST2="${REST1#*$'\t'}"
+LEVEL="${REST2%%$'\t'*}"
+REST3="${REST2#*$'\t'}"
+TOPIC="${REST3%%$'\t'*}"
+MODE="${REST3#*$'\t'}"
+log "Generating level=$LEVEL mode=$MODE story: $LANG_A / $LANG_B"
+
+# 2b. Fetch recent story titles to avoid repeats.
+RECENT_TITLES="(none yet)"
+INDEX_EARLY_FILE="$WORK_DIR/index-early.json"
+EARLY_CODE=$(curl -sS -o "$INDEX_EARLY_FILE" -w "%{http_code}" \
+  -H "Authorization: Bearer $SERVICE_TOKEN" \
+  "$API_BASE_URL/api/storage/apps/$APP_ID/stories/index.json") || EARLY_CODE=000
+if [ "$EARLY_CODE" = "200" ]; then
+  RECENT_TITLES=$(python3 -c '
+import json, sys
+try:
+    idx = json.load(open(sys.argv[1], encoding="utf-8"))
+    titles = [e.get("title_a","") for e in (idx if isinstance(idx,list) else []) if e.get("title_a")]
+    print("\n".join(f"- {t}" for t in titles[:5]) or "(none yet)")
+except Exception:
+    print("(none yet)")
+' "$INDEX_EARLY_FILE")
+fi
 
 # 3. Build the combined prompt file (system prompt + generation parameters).
 PROMPT_FILE="$WORK_DIR/prompt.md"
@@ -139,6 +173,10 @@ PROMPT_FILE="$WORK_DIR/prompt.md"
   printf 'Base language (lang_a): %s\n' "$LANG_A"
   printf 'Target language (lang_b): %s\n' "$LANG_B"
   printf 'CEFR level: %s\n' "$LEVEL"
+  printf 'Mode: %s   (one of: free | classic | daily_life | travel)\n' "$MODE"
+  printf 'Topic: %s  (empty = no constraint; non-empty = use this as the story'"'"'s theme/setting)\n' "$TOPIC"
+  printf '\nRecent story titles to avoid repeating (titles in lang_a):\n'
+  printf '%s\n' "$RECENT_TITLES"
   printf '\nGenerate a fresh story now. Output ONLY the JSON object described above.\n'
 } > "$PROMPT_FILE"
 
@@ -218,7 +256,7 @@ if not title_a or not title_b:
     sys.exit(2)
 
 paragraphs = story.get("paragraphs") or []
-if not isinstance(paragraphs, list) or len(paragraphs) == 0:
+if not isinstance(paragraphs, list) or len(paragraphs) < 10:
     sys.exit(2)
 
 # Normalise paragraphs + glossary.
@@ -245,7 +283,7 @@ for p in paragraphs:
         glossary.append(entry)
     clean_paragraphs.append({"a": a, "b": b, "glossary": glossary})
 
-if not clean_paragraphs:
+if len(clean_paragraphs) < 10:
     sys.exit(2)
 
 story["paragraphs"] = clean_paragraphs
@@ -334,6 +372,35 @@ IDX_PUT_CODE=$(curl -sS -o /dev/null -w "%{http_code}" \
 
 if [ "$IDX_PUT_CODE" != "200" ] && [ "$IDX_PUT_CODE" != "201" ] && [ "$IDX_PUT_CODE" != "204" ]; then
   log "WARN: failed to update stories/index.json (HTTP $IDX_PUT_CODE)"
+fi
+
+# 7b. Clear next_request from prefs so the next generation reverts to free mode.
+CLEAR_PREFS_CODE=$(python3 - "$PREFS_FILE" "$PREFS_CODE" <<'PY' > "$WORK_DIR/prefs-cleared.json" 2>>"$LOG_FILE"
+import json
+import sys
+
+prefs_file, prefs_code = sys.argv[1], sys.argv[2]
+prefs = {}
+if prefs_code == "200":
+    try:
+        with open(prefs_file, encoding="utf-8") as f:
+            prefs = json.load(f)
+    except Exception:
+        pass
+
+prefs["next_request"] = None
+print(json.dumps(prefs, ensure_ascii=False, indent=2))
+PY
+)
+if [ -s "$WORK_DIR/prefs-cleared.json" ]; then
+  PREFS_PUT_CODE=$(curl -sS -o /dev/null -w "%{http_code}" \
+    -X PUT "$API_BASE_URL/api/storage/apps/$APP_ID/prefs.json" \
+    -H "Authorization: Bearer $SERVICE_TOKEN" \
+    -H "Content-Type: application/json" \
+    --data-binary @"$WORK_DIR/prefs-cleared.json") || PREFS_PUT_CODE=000
+  if [ "$PREFS_PUT_CODE" != "200" ] && [ "$PREFS_PUT_CODE" != "201" ] && [ "$PREFS_PUT_CODE" != "204" ]; then
+    log "WARN: failed to clear next_request in prefs (HTTP $PREFS_PUT_CODE)"
+  fi
 fi
 
 # 8. Push notification.

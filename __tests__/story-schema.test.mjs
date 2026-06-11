@@ -12,6 +12,8 @@ import {
   lookupGlossary,
   normalizeStory,
   buildIndexEntry,
+  totalGlossaryCount,
+  meetsContentBar,
 } from '../story-schema.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -33,6 +35,9 @@ test('inlined schema in index.jsx stays in sync with story-schema.mjs', () => {
     "if (typeof entry.word_b === 'string' && entry.word_b.toLowerCase().includes(needle)) return true",
     "const level = CEFR_LEVELS.includes(story.level) ? story.level : 'B1'",
     "id: story.id,",
+    "if (paragraphs.length < 10) return null",
+    "return story.paragraphs.reduce((n, p) => n + (Array.isArray(p.glossary) ? p.glossary.length : 0), 0)",
+    "return story.paragraphs.length >= 10 && totalGlossaryCount(story) >= 15",
   ]
   for (const snippet of distinctive) {
     assert.ok(
@@ -153,6 +158,15 @@ test('lookupGlossary returns null when glossary is missing', () => {
 // ---------------------------------------------------------------------------
 // normalizeStory
 // ---------------------------------------------------------------------------
+const BASE_PARA = {
+  a: 'Maria looked everywhere for her key.',
+  b: 'María buscó su llave por todas partes.',
+  glossary: [
+    { word_a: 'key', word_b: 'llave', note: 'feminine noun' },
+    { word_a: 'looked', word_b: 'buscó' },
+  ],
+}
+
 const GOOD_STORY = {
   id: '550e8400-e29b-41d4-a716-446655440000',
   title_a: 'The Lost Key',
@@ -161,16 +175,8 @@ const GOOD_STORY = {
   lang_b: 'Spanish',
   level: 'B1',
   created: '2026-06-10T12:00:00Z',
-  paragraphs: [
-    {
-      a: 'Maria looked everywhere for her key.',
-      b: 'María buscó su llave por todas partes.',
-      glossary: [
-        { word_a: 'key', word_b: 'llave', note: 'feminine noun' },
-        { word_a: 'looked', word_b: 'buscó' },
-      ],
-    },
-  ],
+  // 10 paragraphs — meets the new minimum
+  paragraphs: Array.from({ length: 10 }, () => ({ ...BASE_PARA, glossary: [...BASE_PARA.glossary] })),
 }
 
 test('normalizeStory accepts a well-formed story', () => {
@@ -179,7 +185,7 @@ test('normalizeStory accepts a well-formed story', () => {
   assert.equal(s.id, GOOD_STORY.id)
   assert.equal(s.title_a, 'The Lost Key')
   assert.equal(s.level, 'B1')
-  assert.equal(s.paragraphs.length, 1)
+  assert.equal(s.paragraphs.length, 10)
   assert.equal(s.paragraphs[0].glossary.length, 2)
 })
 
@@ -203,6 +209,11 @@ test('normalizeStory returns null when paragraphs is empty after filtering', () 
   assert.equal(normalizeStory({ ...GOOD_STORY, paragraphs: [{ a: '', b: 'x' }] }), null)
 })
 
+test('normalizeStory returns null when fewer than 10 paragraphs', () => {
+  const ninePara = Array.from({ length: 9 }, () => ({ ...BASE_PARA }))
+  assert.equal(normalizeStory({ ...GOOD_STORY, paragraphs: ninePara }), null)
+})
+
 test('normalizeStory defaults level to B1 for an unknown CEFR value', () => {
   const s = normalizeStory({ ...GOOD_STORY, level: 'Z9' })
   assert.ok(s)
@@ -210,19 +221,104 @@ test('normalizeStory defaults level to B1 for an unknown CEFR value', () => {
 })
 
 test('normalizeStory drops glossary entries missing word_a or word_b', () => {
-  const story = {
-    ...GOOD_STORY,
-    paragraphs: [{
-      ...GOOD_STORY.paragraphs[0],
-      glossary: [
-        { word_a: '', word_b: 'llave' },   // missing word_a — dropped
-        { word_a: 'key', word_b: 'llave' }, // good
-      ],
-    }],
-  }
+  // Need 10 paragraphs; vary the first one's glossary to test filtering
+  const paragraphs = Array.from({ length: 10 }, (_, idx) =>
+    idx === 0
+      ? {
+          ...BASE_PARA,
+          glossary: [
+            { word_a: '', word_b: 'llave' },   // missing word_a — dropped
+            { word_a: 'key', word_b: 'llave' }, // good
+          ],
+        }
+      : { ...BASE_PARA, glossary: [...BASE_PARA.glossary] },
+  )
+  const story = { ...GOOD_STORY, paragraphs }
   const s = normalizeStory(story)
+  assert.ok(s)
   assert.equal(s.paragraphs[0].glossary.length, 1)
   assert.equal(s.paragraphs[0].glossary[0].word_a, 'key')
+})
+
+// ---------------------------------------------------------------------------
+// totalGlossaryCount
+// ---------------------------------------------------------------------------
+test('totalGlossaryCount returns 0 for null/undefined', () => {
+  assert.equal(totalGlossaryCount(null), 0)
+  assert.equal(totalGlossaryCount(undefined), 0)
+})
+
+test('totalGlossaryCount returns 0 for a story with no paragraphs array', () => {
+  assert.equal(totalGlossaryCount({}), 0)
+  assert.equal(totalGlossaryCount({ paragraphs: null }), 0)
+})
+
+test('totalGlossaryCount returns 0 for a story with empty glossaries', () => {
+  const story = { paragraphs: [{ glossary: [] }, { glossary: [] }] }
+  assert.equal(totalGlossaryCount(story), 0)
+})
+
+test('totalGlossaryCount sums entries across all paragraphs', () => {
+  const story = {
+    paragraphs: [
+      { glossary: [{ word_a: 'a', word_b: 'b' }, { word_a: 'c', word_b: 'd' }] },
+      { glossary: [{ word_a: 'e', word_b: 'f' }] },
+      { glossary: [] },
+      { glossary: [{ word_a: 'g', word_b: 'h' }, { word_a: 'i', word_b: 'j' }, { word_a: 'k', word_b: 'l' }] },
+    ],
+  }
+  assert.equal(totalGlossaryCount(story), 6)
+})
+
+test('totalGlossaryCount counts entries on a normalized GOOD_STORY', () => {
+  const s = normalizeStory(GOOD_STORY)
+  // 10 paragraphs × 2 glossary entries = 20
+  assert.equal(totalGlossaryCount(s), 20)
+})
+
+// ---------------------------------------------------------------------------
+// meetsContentBar
+// ---------------------------------------------------------------------------
+test('meetsContentBar returns false for null', () => {
+  assert.equal(meetsContentBar(null), false)
+})
+
+test('meetsContentBar returns true for a story with ≥10 paragraphs and ≥15 total glossary entries', () => {
+  const s = normalizeStory(GOOD_STORY) // 10 paras, 20 total glossary entries
+  assert.ok(s)
+  assert.equal(meetsContentBar(s), true)
+})
+
+test('meetsContentBar returns false when fewer than 10 paragraphs', () => {
+  // Build a story with only 8 paragraphs (won't pass normalizeStory, use raw object)
+  const story = {
+    paragraphs: Array.from({ length: 8 }, () => ({
+      glossary: [{ word_a: 'a', word_b: 'b' }, { word_a: 'c', word_b: 'd' }, { word_a: 'e', word_b: 'f' }],
+    })),
+  }
+  assert.equal(meetsContentBar(story), false)
+})
+
+test('meetsContentBar returns false when 10 paragraphs but fewer than 15 total glossary entries', () => {
+  // 10 paragraphs, only 1 glossary entry each = 10 total
+  const story = {
+    paragraphs: Array.from({ length: 10 }, () => ({
+      glossary: [{ word_a: 'a', word_b: 'b' }],
+    })),
+  }
+  assert.equal(meetsContentBar(story), false)
+})
+
+test('meetsContentBar returns true at the exact boundary (10 paras, 15 entries)', () => {
+  // 10 paragraphs; first 5 have 3 entries each = 15 total
+  const story = {
+    paragraphs: Array.from({ length: 10 }, (_, i) => ({
+      glossary: i < 5
+        ? [{ word_a: 'a', word_b: 'b' }, { word_a: 'c', word_b: 'd' }, { word_a: 'e', word_b: 'f' }]
+        : [],
+    })),
+  }
+  assert.equal(meetsContentBar(story), true)
 })
 
 // ---------------------------------------------------------------------------

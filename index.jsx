@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 
 // ===== INLINE-SCHEMA START (canonical source: story-schema.mjs) =====
 // The Möbius installer fetches and compiles ONLY the entry file (index.jsx)
@@ -67,8 +67,18 @@ function normalizeStory(story) {
     }
     paragraphs.push({ a, b, glossary })
   }
-  if (paragraphs.length === 0) return null
+  if (paragraphs.length < 10) return null
   return { id, title_a, title_b, lang_a, lang_b, level, created, paragraphs }
+}
+
+function totalGlossaryCount(story) {
+  if (!story || !Array.isArray(story.paragraphs)) return 0
+  return story.paragraphs.reduce((n, p) => n + (Array.isArray(p.glossary) ? p.glossary.length : 0), 0)
+}
+
+function meetsContentBar(story) {
+  if (!story) return false
+  return story.paragraphs.length >= 10 && totalGlossaryCount(story) >= 15
 }
 
 function buildIndexEntry(story) {
@@ -351,10 +361,6 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
   touch-action: manipulation;
 }
 .tn-scroll { overscroll-behavior: contain; }
-@media (prefers-reduced-motion: no-preference) {
-  .tn-para-b { transition: opacity 0.18s ease; }
-  .tn-para-b.is-leading { opacity: 1; }
-}
 /* end NativeTouch */
 
 /* ---------- App-specific styles ---------- */
@@ -450,85 +456,71 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .tn-lang-toggle:active { transform: scale(0.96); }
 .tn-lang-toggle-arrow { color: var(--muted); font-size: 10px; }
 
-/* Story body */
+/* Split-pane reader */
 .tn-reader-body {
   flex: 1; min-height: 0;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+.tn-pane {
   overflow-y: auto; overflow-x: hidden;
   overscroll-behavior: contain;
   padding: 0 0 32px;
+  min-height: 0;
 }
+.tn-pane::-webkit-scrollbar { width: 9px; height: 9px; }
+.tn-pane::-webkit-scrollbar-thumb {
+  background: var(--border); border-radius: 999px;
+  border: 2px solid transparent; background-clip: padding-box;
+}
+.tn-pane::-webkit-scrollbar-track { background: transparent; }
+
+.tn-pane-top { border-bottom: 1px solid var(--border); }
+.tn-pane-bottom {}
+
+/* Draggable divider */
+.tn-divider-handle {
+  flex: 0 0 auto; height: 20px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: row-resize; background: var(--surface);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  user-select: none; -webkit-user-select: none; touch-action: none;
+}
+.tn-divider-pip {
+  width: 32px; height: 4px; border-radius: 2px;
+  background: var(--border);
+}
+
+/* Story head inside each pane */
 .tn-story-head {
-  padding: 20px 18px 12px;
+  padding: 16px 18px 10px;
   border-bottom: 1px solid var(--border-light, var(--border));
 }
 .tn-story-title-a {
-  font-size: 22px; font-weight: 800; letter-spacing: -0.02em;
-  line-height: 1.2; margin: 0 0 4px;
+  font-size: 20px; font-weight: 800; letter-spacing: -0.02em;
+  line-height: 1.2; margin: 0 0 3px;
 }
 .tn-story-title-b {
-  font-size: 14px; font-weight: 500; color: var(--muted);
+  font-size: 13px; font-weight: 500; color: var(--muted);
   margin: 0; line-height: 1.4;
 }
 
-/* Paragraph pairs — interleaved on mobile, side-by-side on wide screens */
-.tn-para-pair {
-  padding: 14px 18px 0;
-  border-bottom: 1px solid var(--border-light, color-mix(in srgb, var(--border) 60%, transparent));
+/* Paragraphs in each pane */
+.tn-para {
+  padding: 12px 18px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
 }
-.tn-para-pair:last-of-type { border-bottom: none; }
-
-/* Leading language (A) — normal weight */
-.tn-para-a {
-  font-size: 15px; line-height: 1.7; margin: 0 0 8px;
+.tn-para:last-of-type { border-bottom: none; }
+.tn-para-text {
+  font-size: 15px; line-height: 1.72; margin: 0 0 12px;
   color: var(--text);
 }
-/* Trailing language (B) — subordinated: smaller + muted */
-.tn-para-b {
-  font-size: 13.5px; line-height: 1.65; margin: 0 0 14px;
-  color: var(--muted);
-  border-left: 2px solid color-mix(in srgb, var(--accent) 40%, transparent);
-  padding-left: 10px;
-}
-/* When B is the leading language, elevate it and subordinate A */
-.tn-para-pair.is-b-lead .tn-para-a {
-  font-size: 13.5px; color: var(--muted);
-  border-left: 2px solid color-mix(in srgb, var(--accent) 40%, transparent);
-  padding-left: 10px; margin: 8px 0 14px;
-  order: 2;
-}
-.tn-para-pair.is-b-lead .tn-para-b {
-  font-size: 15px; color: var(--text);
-  border-left: none; padding-left: 0; margin: 0 0 8px;
-  order: 1;
-}
-.tn-para-pair.is-b-lead {
-  display: flex; flex-direction: column;
-}
 
-/* Side-by-side layout on wide screens (≥720px) */
-@media (min-width: 720px) {
-  .tn-para-pair {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 0 24px;
-    padding-bottom: 14px;
-    align-items: start;
-  }
-  .tn-para-pair.is-b-lead {
-    flex-direction: unset;
-    display: grid; grid-template-columns: 1fr 1fr;
-  }
-  .tn-para-a, .tn-para-b {
-    margin: 0;
-  }
-  .tn-para-b {
-    border-left: 1px solid var(--border); padding-left: 16px;
-  }
-  .tn-para-pair.is-b-lead .tn-para-a {
-    border-left: 1px solid var(--border); padding-left: 16px;
-    margin: 0; order: 2;
-  }
-  .tn-para-pair.is-b-lead .tn-para-b {
-    border-left: none; padding-left: 0; order: 1;
-  }
+/* Highlighted paragraph (word tap) */
+.tn-para.is-highlighted {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
 /* Word tap target — wraps each "word" in the paragraph text */
@@ -614,15 +606,28 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .tn-loading { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 48px 24px; color: var(--muted); font-size: 13px; }
 
 /* Scrollskin */
-.tn-scroll::-webkit-scrollbar,
-.tn-reader-body::-webkit-scrollbar { width: 9px; height: 9px; }
-.tn-scroll::-webkit-scrollbar-thumb,
-.tn-reader-body::-webkit-scrollbar-thumb {
+.tn-scroll::-webkit-scrollbar { width: 9px; height: 9px; }
+.tn-scroll::-webkit-scrollbar-thumb {
   background: var(--border); border-radius: 999px;
   border: 2px solid transparent; background-clip: padding-box;
 }
-.tn-scroll::-webkit-scrollbar-track,
-.tn-reader-body::-webkit-scrollbar-track { background: transparent; }
+.tn-scroll::-webkit-scrollbar-track { background: transparent; }
+
+/* Generation variety chips */
+.tn-chips { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0 4px; }
+.tn-chip {
+  min-height: 36px; padding: 5px 13px; border-radius: 20px;
+  border: 1px solid var(--border); background: var(--surface);
+  color: var(--muted); font-size: 13px; font-weight: 600;
+  cursor: pointer; font-family: var(--font);
+  touch-action: manipulation; user-select: none;
+  transition: border-color 0.14s, color 0.14s, background 0.14s;
+}
+.tn-chip.is-active {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: var(--accent); color: var(--accent);
+}
+@media (hover: hover) { .tn-chip:hover { border-color: var(--accent); color: var(--text); } }
 `
 
 // ---------------------------------------------------------------------------
@@ -727,15 +732,135 @@ function ParagraphSheet({ para, langA, langB, tappedLang, tappedWord, onClose })
 }
 
 // ---------------------------------------------------------------------------
-// StoryReader — full-bleed overlay that renders the bilingual story.
+// Scroll-sync pure functions (see scroll-sync.mjs for the unit-tested canonical version).
 // ---------------------------------------------------------------------------
+function computeParaOffsets(paraRefs) {
+  const offsets = []
+  for (const ref of paraRefs) {
+    if (!ref || !ref.current) return null
+    offsets.push({
+      top: ref.current.offsetTop,
+      height: ref.current.offsetHeight || 1,
+    })
+  }
+  return offsets
+}
+
+function computeSyncScrollTop(scrollTop, srcOffsets, dstOffsets) {
+  if (!srcOffsets || !dstOffsets || srcOffsets.length !== dstOffsets.length) return null
+  const n = srcOffsets.length
+  if (n === 0) return null
+
+  // Find anchor paragraph: last para whose top <= scrollTop
+  let anchorIdx = 0
+  for (let i = 0; i < n; i++) {
+    if (srcOffsets[i].top <= scrollTop) anchorIdx = i
+    else break
+  }
+
+  const src = srcOffsets[anchorIdx]
+  const dst = dstOffsets[anchorIdx]
+
+  // Intra-paragraph fraction (clamp 0–1)
+  const frac = Math.min(1, Math.max(0, (scrollTop - src.top) / src.height))
+
+  // Target scrollTop: dst para top + same fraction of dst para height
+  return dst.top + frac * dst.height
+}
+
 function StoryReader({ story, prefs, appId, token, onClose, onFeedback }) {
-  // bLead: when true, lang_b is shown first (the one the user is learning).
   const [bLead, setBLead] = useState(false)
-  const [sheet, setSheet] = useState(null) // { type: 'glossary'|'para', paraIdx, word, lang }
+  const [sheet, setSheet] = useState(null)
   const [feedbackVerdict, setFeedbackVerdict] = useState(null)
+  const [splitRatio, setSplitRatio] = useState(() => {
+    try {
+      const v = parseFloat(localStorage.getItem('tn-split-ratio'))
+      if (v >= 0.2 && v <= 0.8) return v
+    } catch {}
+    return 0.5
+  })
+  const [highlightedPara, setHighlightedPara] = useState(null)
+
+  const topPaneRef = useRef(null)
+  const botPaneRef = useRef(null)
+  const readerBodyRef = useRef(null)
+  const isSyncingRef = useRef(false)
+  const rafRef = useRef(null)
+
+  // Stable per-paragraph ref arrays (one object per paragraph, reused across renders)
+  const topParaRefs = useMemo(
+    () => story.paragraphs.map(() => ({ current: null })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [story.paragraphs.length],
+  )
+  const botParaRefs = useMemo(
+    () => story.paragraphs.map(() => ({ current: null })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [story.paragraphs.length],
+  )
+
+  // Persist split ratio
+  useEffect(() => {
+    try { localStorage.setItem('tn-split-ratio', String(splitRatio)) } catch {}
+  }, [splitRatio])
+
+  // Cleanup rAF on unmount
+  useEffect(() => () => { if (rafRef.current) cancelAnimationFrame(rafRef.current) }, [])
+
+  const handleTopScroll = useCallback(() => {
+    if (isSyncingRef.current) return
+    if (rafRef.current) cancelAnimationFrame(rafRef.current)
+    rafRef.current = requestAnimationFrame(() => {
+      const topPane = topPaneRef.current
+      const botPane = botPaneRef.current
+      if (!topPane || !botPane) return
+      const srcOffsets = computeParaOffsets(topParaRefs)
+      const dstOffsets = computeParaOffsets(botParaRefs)
+      const target = computeSyncScrollTop(topPane.scrollTop, srcOffsets, dstOffsets)
+      if (target === null) return
+      isSyncingRef.current = true
+      botPane.scrollTop = target
+      requestAnimationFrame(() => { isSyncingRef.current = false })
+    })
+  }, [topParaRefs, botParaRefs])
+
+  const handleBotScroll = useCallback(() => {
+    if (isSyncingRef.current) return
+    if (rafRef.current) cancelAnimationFrame(rafRef.current)
+    rafRef.current = requestAnimationFrame(() => {
+      const topPane = topPaneRef.current
+      const botPane = botPaneRef.current
+      if (!topPane || !botPane) return
+      const srcOffsets = computeParaOffsets(botParaRefs)
+      const dstOffsets = computeParaOffsets(topParaRefs)
+      const target = computeSyncScrollTop(botPane.scrollTop, srcOffsets, dstOffsets)
+      if (target === null) return
+      isSyncingRef.current = true
+      topPane.scrollTop = target
+      requestAnimationFrame(() => { isSyncingRef.current = false })
+    })
+  }, [topParaRefs, botParaRefs])
+
+  const handleDividerPointerDown = useCallback((e) => {
+    e.preventDefault()
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }, [])
+
+  const handleDividerPointerMove = useCallback((e) => {
+    if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
+    const body = readerBodyRef.current
+    if (!body) return
+    const rect = body.getBoundingClientRect()
+    const newRatio = (e.clientY - rect.top) / rect.height
+    setSplitRatio(Math.min(0.8, Math.max(0.2, newRatio)))
+  }, [])
+
+  const handleDividerPointerUp = useCallback((e) => {
+    e.currentTarget.releasePointerCapture(e.pointerId)
+  }, [])
 
   const handleWordTap = useCallback((paraIdx, word, lang) => {
+    setHighlightedPara(paraIdx)
     const para = story.paragraphs[paraIdx]
     const entry = lookupGlossary(para, word)
     if (entry) {
@@ -743,7 +868,15 @@ function StoryReader({ story, prefs, appId, token, onClose, onFeedback }) {
     } else {
       setSheet({ type: 'para', paraIdx, word, lang })
     }
-  }, [story])
+    // Scroll the opposite pane to show the highlighted paragraph
+    setTimeout(() => {
+      const isTop = (lang === 'a' && !bLead) || (lang === 'b' && bLead)
+      const otherRef = isTop ? botParaRefs[paraIdx] : topParaRefs[paraIdx]
+      if (otherRef?.current) {
+        otherRef.current.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+      }
+    }, 0)
+  }, [story, bLead, topParaRefs, botParaRefs])
 
   const closeSheet = useCallback(() => setSheet(null), [])
 
@@ -778,47 +911,99 @@ function StoryReader({ story, prefs, appId, token, onClose, onFeedback }) {
         </div>
       </div>
 
-      <div className="tn-reader-body">
-        <div className="tn-story-head">
-          <p className="tn-story-title-a">{bLead ? story.title_b : story.title_a}</p>
-          <p className="tn-story-title-b">{bLead ? story.title_a : story.title_b}</p>
+      <div className="tn-reader-body" ref={readerBodyRef}>
+        {/* TOP PANE */}
+        <div
+          className="tn-pane tn-pane-top"
+          ref={topPaneRef}
+          style={{ height: `${splitRatio * 100}%` }}
+          onScroll={handleTopScroll}
+        >
+          <div className="tn-story-head">
+            <p className="tn-story-title-a">{bLead ? story.title_b : story.title_a}</p>
+            <p className="tn-story-title-b">{bLead ? langA : langB} (translated)</p>
+          </div>
+          {story.paragraphs.map((para, i) => (
+            <div
+              key={i}
+              ref={(el) => { topParaRefs[i].current = el }}
+              className={`tn-para${highlightedPara === i ? ' is-highlighted' : ''}`}
+            >
+              <p className="tn-para-text">
+                <WordSpan
+                  text={bLead ? para.b : para.a}
+                  onTap={(w) => handleWordTap(i, w, bLead ? 'b' : 'a')}
+                />
+              </p>
+            </div>
+          ))}
         </div>
 
-        {story.paragraphs.map((para, i) => (
-          <div key={i} className={`tn-para-pair${bLead ? ' is-b-lead' : ''}`}>
-            <p className="tn-para-text tn-para-a">
-              <WordSpan text={para.a} onTap={(w) => handleWordTap(i, w, 'a')} />
-            </p>
-            <p className="tn-para-text tn-para-b">
-              <WordSpan text={para.b} onTap={(w) => handleWordTap(i, w, 'b')} />
-            </p>
-          </div>
-        ))}
+        {/* DIVIDER */}
+        <div
+          className="tn-divider-handle"
+          onPointerDown={handleDividerPointerDown}
+          onPointerMove={handleDividerPointerMove}
+          onPointerUp={handleDividerPointerUp}
+          onPointerCancel={handleDividerPointerUp}
+          aria-label="Drag to resize panes"
+          role="separator"
+          aria-orientation="horizontal"
+        >
+          <div className="tn-divider-pip" />
+        </div>
 
-        <div className="tn-feedback-row">
-          <div className="tn-feedback-label">How was this story for you?</div>
-          <div className="tn-feedback-btns">
-            {[
-              { verdict: 'too_simple', label: 'Too simple' },
-              { verdict: 'just_right', label: 'Just right' },
-              { verdict: 'too_complex', label: 'Too complex' },
-            ].map(({ verdict, label }) => (
-              <button
-                key={verdict}
-                type="button"
-                className={`tn-feedback-btn${feedbackVerdict === verdict ? ' is-selected' : ''}`}
-                onClick={() => handleFeedback(verdict)}
-                aria-pressed={feedbackVerdict === verdict}
-              >
-                {label}
-              </button>
-            ))}
+        {/* BOTTOM PANE */}
+        <div
+          className="tn-pane tn-pane-bottom"
+          ref={botPaneRef}
+          style={{ height: `${(1 - splitRatio) * 100}%` }}
+          onScroll={handleBotScroll}
+        >
+          <div className="tn-story-head">
+            <p className="tn-story-title-a">{bLead ? story.title_a : story.title_b}</p>
+            <p className="tn-story-title-b">{bLead ? langB : langA}</p>
           </div>
-          {feedbackVerdict && (
-            <div className="tn-feedback-confirm">
-              Saved! Future stories will adapt to your feedback.
+          {story.paragraphs.map((para, i) => (
+            <div
+              key={i}
+              ref={(el) => { botParaRefs[i].current = el }}
+              className={`tn-para${highlightedPara === i ? ' is-highlighted' : ''}`}
+            >
+              <p className="tn-para-text">
+                <WordSpan
+                  text={bLead ? para.a : para.b}
+                  onTap={(w) => handleWordTap(i, w, bLead ? 'a' : 'b')}
+                />
+              </p>
             </div>
-          )}
+          ))}
+          {/* Feedback row — in the bottom pane after the last paragraph */}
+          <div className="tn-feedback-row">
+            <div className="tn-feedback-label">How was this story for you?</div>
+            <div className="tn-feedback-btns">
+              {[
+                { verdict: 'too_simple', label: 'Too simple' },
+                { verdict: 'just_right', label: 'Just right' },
+                { verdict: 'too_complex', label: 'Too complex' },
+              ].map(({ verdict, label }) => (
+                <button
+                  key={verdict}
+                  type="button"
+                  className={`tn-feedback-btn${feedbackVerdict === verdict ? ' is-selected' : ''}`}
+                  onClick={() => handleFeedback(verdict)}
+                  aria-pressed={feedbackVerdict === verdict}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {feedbackVerdict && (
+              <div className="tn-feedback-confirm">
+                Saved! Future stories will adapt to your feedback.
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -847,6 +1032,67 @@ function StoryReader({ story, prefs, appId, token, onClose, onFeedback }) {
 }
 
 // ---------------------------------------------------------------------------
+// GenerateSheet — bottom sheet for choosing story topic + mode before generating.
+// ---------------------------------------------------------------------------
+function GenerateSheet({ onGenerate, onCancel }) {
+  const [topicInput, setTopicInput] = useState('')
+  const [selectedMode, setSelectedMode] = useState(null)
+
+  const CHIPS = [
+    { label: 'Surprise me', mode: 'free' },
+    { label: 'A classic tale', mode: 'classic' },
+    { label: 'Daily life', mode: 'daily_life' },
+    { label: 'Travel', mode: 'travel' },
+  ]
+
+  const handleChip = (mode) => {
+    setSelectedMode((prev) => prev === mode ? null : mode)
+  }
+
+  const handleGenerate = () => {
+    onGenerate({ topic: topicInput.trim(), mode: selectedMode || 'free' })
+  }
+
+  return (
+    <div className="tn-scrim" onClick={onCancel} role="dialog" aria-modal="true" aria-label="Generate story">
+      <div className="tn-sheet" onClick={(e) => e.stopPropagation()}>
+        <p className="tn-sheet-title">Generate a story</p>
+        <div>
+          <label className="tn-setup-label" htmlFor="tn-gen-topic">Topic (optional)</label>
+          <input
+            id="tn-gen-topic"
+            className="tn-input"
+            value={topicInput}
+            onChange={(e) => setTopicInput(e.target.value)}
+            placeholder="e.g. a street musician in Tokyo, friendship, a rainy day"
+            autoComplete="off"
+          />
+        </div>
+        <div>
+          <div className="tn-setup-label" style={{ marginBottom: 0 }}>Genre</div>
+          <div className="tn-chips">
+            {CHIPS.map(({ label, mode }) => (
+              <button
+                key={mode}
+                type="button"
+                className={`tn-chip${selectedMode === mode ? ' is-active' : ''}`}
+                onClick={() => handleChip(mode)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="tn-sheet-actions">
+          <button type="button" className="tn-btn tn-btn-secondary" onClick={onCancel}>Cancel</button>
+          <button type="button" className="tn-btn tn-btn-primary" onClick={handleGenerate}>Generate</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // LibraryTab — story list + generate button.
 // ---------------------------------------------------------------------------
 function LibraryTab({ appId, token, online, prefs, onPrefsChange }) {
@@ -856,6 +1102,7 @@ function LibraryTab({ appId, token, online, prefs, onPrefsChange }) {
   const [generating, setGenerating] = useState(false)
   const [statusMsg, setStatusMsg] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
+  const [showGenerateSheet, setShowGenerateSheet] = useState(false)
   const generatingRef = useRef(false)
   const pollRef = useRef(null)
   const navRef = useRef(null)
@@ -972,6 +1219,15 @@ function LibraryTab({ appId, token, online, prefs, onPrefsChange }) {
     }, 4000)
   }, [appId, token, index])
 
+  const handleSheetGenerate = useCallback(async ({ topic, mode }) => {
+    setShowGenerateSheet(false)
+    // Save topic + mode to prefs as next_request; generate.sh will read and clear it
+    const next = { ...prefs, next_request: { topic, mode } }
+    onPrefsChange(next)
+    await savePrefs(appId, token, next)
+    handleGenerate()
+  }, [appId, token, prefs, onPrefsChange, handleGenerate])
+
   // Show first-run setup if no prefs are set.
   const needsSetup = !prefs.lang_a || !prefs.lang_b
 
@@ -1000,7 +1256,7 @@ function LibraryTab({ appId, token, online, prefs, onPrefsChange }) {
         <button
           type="button"
           className="tn-generate-btn"
-          onClick={handleGenerate}
+          onClick={() => setShowGenerateSheet(true)}
           disabled={generateDisabled}
           title={!online ? 'Online required to generate' : undefined}
           aria-busy={generating}
@@ -1041,6 +1297,13 @@ function LibraryTab({ appId, token, online, prefs, onPrefsChange }) {
             <span className="tn-level-pill">{entry.level}</span>
           </button>
         ))
+      )}
+
+      {showGenerateSheet && (
+        <GenerateSheet
+          onGenerate={handleSheetGenerate}
+          onCancel={() => setShowGenerateSheet(false)}
+        />
       )}
 
       {activeStory && (
