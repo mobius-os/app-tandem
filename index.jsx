@@ -921,7 +921,7 @@ function StoryReader({ story, prefs, appId, token, onClose, onFeedback }) {
         >
           <div className="tn-story-head">
             <p className="tn-story-title-a">{bLead ? story.title_b : story.title_a}</p>
-            <p className="tn-story-title-b">{bLead ? langA : langB} (translated)</p>
+            <p className="tn-story-title-b">{bLead ? langB : langA}</p>
           </div>
           {story.paragraphs.map((para, i) => (
             <div
@@ -962,7 +962,7 @@ function StoryReader({ story, prefs, appId, token, onClose, onFeedback }) {
         >
           <div className="tn-story-head">
             <p className="tn-story-title-a">{bLead ? story.title_a : story.title_b}</p>
-            <p className="tn-story-title-b">{bLead ? langB : langA}</p>
+            <p className="tn-story-title-b">{bLead ? langA : langB} (translated)</p>
           </div>
           {story.paragraphs.map((para, i) => (
             <div

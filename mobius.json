@@ -1,7 +1,7 @@
 {
   "id": "tandem",
   "name": "Tandem",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Split-pane bilingual reader for language learning. Top and bottom panes show each language independently with sync-scroll; drag the divider to resize. Choose a topic or genre before generating; tap any word for its paired meaning.",
   "offline_capable": true,
   "author": "mobius-os",
