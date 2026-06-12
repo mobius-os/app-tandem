@@ -1,8 +1,8 @@
 {
   "id": "tandem",
   "name": "Tandem",
-  "version": "0.4.1",
-  "description": "Split-pane bilingual reader for language learning. Top and bottom panes show each language independently with sync-scroll; drag the slim divider to resize. Choose languages, level, topic, or genre when generating; tap any word to highlight it, its sentence, and its translation inline in both panes.",
+  "version": "0.5.0",
+  "description": "Split-pane bilingual reader for language learning. Top and bottom panes show each language independently with sync-scroll; drag the slim divider to resize. Choose languages, level, topic, or genre when generating — and the generation model in settings; tap any word to highlight it, its sentence, and its translation inline in both panes.",
   "offline_capable": true,
   "author": "mobius-os",
   "license": "MIT",

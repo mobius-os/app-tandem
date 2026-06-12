@@ -7,12 +7,15 @@
 #
 # What it does:
 #   1. Loads the service token and reads prefs.json (target language, base language,
-#      CEFR level, topic, mode). Applies feedback_history to adapt the requested level.
+#      CEFR level, topic, mode, generation model). Applies feedback_history to adapt
+#      the requested level.
 #   2a. Fetches recent story titles to avoid repeats.
 #   2b. Reads system-prompt.md (baked schema, role + output format) and appends the
 #      generation parameters as a trailing section.
 #   3. Runs the Claude CLI with NO tools — the output is pure JSON from the model's
-#      reasoning alone. No web search; stories are fictional.
+#      reasoning alone. No web search; stories are fictional. The chosen model
+#      (next_request.model, falling back to prefs.gen_model) is passed via --model;
+#      a failed custom-model run retries once on the platform default.
 #   4. Extracts the JSON story object from stdout and validates it minimally.
 #   5. Writes stories/<id>.json and updates stories/index.json.
 #   6. Clears next_request from prefs so the next generation reverts to free mode.
@@ -83,9 +86,10 @@ PREFS_CODE=$(curl -sS -o "$PREFS_FILE" -w "%{http_code}" \
   "$API_BASE_URL/api/storage/apps/$APP_ID/prefs.json") || PREFS_CODE=000
 
 # Parse prefs; fall back to English/Spanish B1 defaults.
-# Output 6 tab-separated fields: lang_a, lang_b, level, topic, mode, ratings
+# Output 7 tab-separated fields: lang_a, lang_b, level, topic, mode, ratings, model
 PARAMS=$(python3 - "$PREFS_FILE" "$PREFS_CODE" <<'PY'
 import json
+import re
 import sys
 
 prefs_file, prefs_code = sys.argv[1], sys.argv[2]
@@ -153,7 +157,20 @@ if req_lang_a:
 if req_lang_b:
     lang_b = req_lang_b
 
-print(f"{lang_a}\t{lang_b}\t{level}\t{topic}\t{mode}\t{ratings}")
+# Generation model: the per-run record (next_request.model) wins over the
+# persisted setting (prefs.gen_model); scheduled runs have no next_request
+# and use the setting directly. Empty means the platform default. Old prefs
+# without gen_model fall through to "" by construction (lenient read).
+# Restrict to plausible model-id characters — anything else reads as default
+# so a corrupted value can't reach the CLI argv.
+model = next_req.get("model") or prefs.get("gen_model") or ""
+if not isinstance(model, str):
+    model = ""
+model = model.strip()
+if model and not re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", model):
+    model = ""
+
+print(f"{lang_a}\t{lang_b}\t{level}\t{topic}\t{mode}\t{ratings}\t{model}")
 PY
 )
 LANG_A="${PARAMS%%$'\t'*}"
@@ -165,8 +182,10 @@ REST3="${REST2#*$'\t'}"
 TOPIC="${REST3%%$'\t'*}"
 REST4="${REST3#*$'\t'}"
 MODE="${REST4%%$'\t'*}"
-RATINGS="${REST4#*$'\t'}"
-log "Generating level=$LEVEL mode=$MODE story: $LANG_A / $LANG_B (recent ratings: $RATINGS)"
+REST5="${REST4#*$'\t'}"
+RATINGS="${REST5%%$'\t'*}"
+GEN_MODEL="${REST5#*$'\t'}"
+log "Generating level=$LEVEL mode=$MODE model=${GEN_MODEL:-default} story: $LANG_A / $LANG_B (recent ratings: $RATINGS)"
 
 # 2b. Fetch recent story titles to avoid repeats.
 RECENT_TITLES="(none yet)"
@@ -203,36 +222,37 @@ PROMPT_FILE="$WORK_DIR/prompt.md"
   printf '\nGenerate a fresh story now. Output ONLY the JSON object described above.\n'
 } > "$PROMPT_FILE"
 
-# 4. Run Claude CLI (no tools — stories are fictional, no web search needed).
+# 4+5. Run the Claude CLI and extract + validate the JSON story.
+#
+# Model fallback contract: when a custom model is set and the run fails —
+# nonzero exit OR no extractable story — retry ONCE with the platform
+# default. An invalid or retired model id must degrade to a default-model
+# story, never to a hard failure. Extraction is the real success test:
+# the CLI has been observed to exit 0 while printing only an error
+# sentence ("There's an issue with the selected model…") for an unknown
+# model id.
 RAW_OUTPUT="$WORK_DIR/agent.out"
-CLAUDE_FLAGS=(
-  --system-prompt-file "$PROMPT_FILE"
-  --allowedTools ""
-  --max-turns 3
-)
-timeout "$TANDEM_TIMEOUT" env CLAUDE_CONFIG_DIR=/data/cli-auth/claude \
-  claude -p "Generate the bilingual story now. Output only the JSON object." \
-  "${CLAUDE_FLAGS[@]}" > "$RAW_OUTPUT" 2>>"$LOG_FILE"
-CLI_EXIT=$?
-
-if [ "$CLI_EXIT" -ne 0 ]; then
-  log "ERROR: agent exited with code $CLI_EXIT"
-  curl -sS -X POST "$API_BASE_URL/api/notifications/send" \
-    -H "Authorization: Bearer $SERVICE_TOKEN" \
-    -H "Content-Type: application/json" \
-    -d "{
-      \"title\": \"Tandem: story generation failed\",
-      \"body\": \"The story generator exited with an error. Check Settings.\",
-      \"source_type\": \"app\",
-      \"source_id\": \"$APP_ID\",
-      \"target\": \"/shell/?app=$APP_ID\"
-    }" >> "$LOG_FILE" 2>&1
-  exit 1
-fi
-
-# 5. Extract + validate the JSON story from raw output.
 STORY_FILE="$WORK_DIR/story.json"
-STORY_ID=$(python3 - "$RAW_OUTPUT" "$STORY_FILE" "$LANG_A" "$LANG_B" "$LEVEL" <<'PY' 2>>"$LOG_FILE"
+
+run_agent() {
+  # $1 — model id, or empty for the platform default (no --model flag).
+  local flags=(
+    --system-prompt-file "$PROMPT_FILE"
+    --allowedTools ""
+    --max-turns 3
+  )
+  if [ -n "$1" ]; then
+    flags+=( --model "$1" )
+  fi
+  timeout "$TANDEM_TIMEOUT" env CLAUDE_CONFIG_DIR=/data/cli-auth/claude \
+    claude -p "Generate the bilingual story now. Output only the JSON object." \
+    "${flags[@]}" > "$RAW_OUTPUT" 2>>"$LOG_FILE"
+}
+
+# Prints the story id on success (story written to $STORY_FILE); prints
+# nothing on failure.
+extract_story() {
+  python3 - "$RAW_OUTPUT" "$STORY_FILE" "$LANG_A" "$LANG_B" "$LEVEL" <<'PY' 2>>"$LOG_FILE"
 import json
 import re
 import sys
@@ -323,17 +343,38 @@ with open(out_path, "w", encoding="utf-8") as f:
 
 print(story["id"], end="")
 PY
-)
-EXTRACT_RC=$?
+}
 
-if [ "$EXTRACT_RC" -ne 0 ] || [ -z "$STORY_ID" ]; then
-  log "ERROR: could not extract a valid story from agent output (rc=$EXTRACT_RC)"
+# Attempt list: the chosen model first (when set), then the platform
+# default. With no model set this is a single default-model attempt.
+STORY_ID=""
+FAIL_BODY=""
+for ATTEMPT_MODEL in ${GEN_MODEL:+"$GEN_MODEL"} ""; do
+  run_agent "$ATTEMPT_MODEL"
+  CLI_EXIT=$?
+  if [ "$CLI_EXIT" -ne 0 ]; then
+    log "ERROR: agent exited with code $CLI_EXIT (model=${ATTEMPT_MODEL:-default})"
+    FAIL_BODY="The story generator exited with an error. Check Settings."
+  else
+    STORY_ID=$(extract_story)
+    if [ -n "$STORY_ID" ]; then
+      break
+    fi
+    log "ERROR: could not extract a valid story from agent output (model=${ATTEMPT_MODEL:-default})"
+    FAIL_BODY="The agent did not return a valid story. Try again."
+  fi
+  if [ -n "$ATTEMPT_MODEL" ]; then
+    log "Retrying with the default model."
+  fi
+done
+
+if [ -z "$STORY_ID" ]; then
   curl -sS -X POST "$API_BASE_URL/api/notifications/send" \
     -H "Authorization: Bearer $SERVICE_TOKEN" \
     -H "Content-Type: application/json" \
     -d "{
       \"title\": \"Tandem: story generation failed\",
-      \"body\": \"The agent did not return a valid story. Try again.\",
+      \"body\": \"$FAIL_BODY\",
       \"source_type\": \"app\",
       \"source_id\": \"$APP_ID\",
       \"target\": \"/shell/?app=$APP_ID\"

@@ -190,6 +190,38 @@ function findPhraseTokenRange(tokens, phrase) {
 }
 // ===== INLINE-TEXT-ALIGN END =====
 
+// ===== INLINE-GEN-MODEL START (canonical source: gen-model.mjs) =====
+// Same inlining rationale as the schema block above: the installer compiles
+// only index.jsx. gen-model.mjs is the canonical, unit-tested copy.
+
+// 'Default' is the empty id: prefs carry no gen_model key and generate.sh
+// omits the --model flag, so the platform's own default model applies.
+const DEFAULT_MODEL_ID = ''
+
+function normalizeGenModel(prefs) {
+  if (!prefs || typeof prefs !== 'object') return DEFAULT_MODEL_ID
+  const v = prefs.gen_model
+  if (typeof v !== 'string') return DEFAULT_MODEL_ID
+  return v.trim()
+}
+
+function modelOptionsFrom(registry, currentId) {
+  const options = [{ id: DEFAULT_MODEL_ID, label: 'Default' }]
+  const claude = registry && registry.providers && registry.providers.claude
+  const entries = Array.isArray(claude) ? claude : []
+  for (const entry of entries) {
+    if (!entry || typeof entry.id !== 'string' || !entry.id) continue
+    if (entry.available === false && entry.id !== currentId) continue
+    const label = typeof entry.label === 'string' && entry.label ? entry.label : entry.id
+    options.push({ id: entry.id, label })
+  }
+  if (currentId && !options.some((o) => o.id === currentId)) {
+    options.push({ id: currentId, label: currentId })
+  }
+  return options
+}
+// ===== INLINE-GEN-MODEL END =====
+
 // ---------------------------------------------------------------------------
 // Storage helpers — route through window.mobius.storage when available (for
 // offline queuing + SWR), fall back to direct fetch. Pattern mirrors app-news.
@@ -291,6 +323,22 @@ async function loadPrefs(appId, token) {
 
 async function savePrefs(appId, token, prefs) {
   return putJSON(`/api/storage/apps/${appId}/prefs.json`, token, prefs, appId)
+}
+
+// Model registry for the settings sheet (GET /api/models — owner-token
+// platform route, NOT app storage, so it goes through fetch directly).
+// Returns null on ANY failure; the sheet then offers only 'Default' and
+// generation proceeds unblocked — this preference must never gate the app.
+async function loadModelRegistry(token) {
+  try {
+    const r = await fetch('/api/models', {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!r.ok) return null
+    return await r.json()
+  } catch {
+    return null
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -898,6 +946,37 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 }
 .tn-scroll::-webkit-scrollbar-track { background: transparent; }
 
+/* Settings sheet — model list */
+.tn-model-list { display: flex; flex-direction: column; gap: 6px; }
+.tn-model-row {
+  display: flex; align-items: center; gap: 10px; min-height: 44px;
+  padding: 10px 12px; border-radius: 10px; text-align: left;
+  border: 1px solid var(--border); background: var(--surface);
+  color: var(--text); font-family: var(--font); font-size: 14px; font-weight: 600;
+  cursor: pointer; touch-action: manipulation; user-select: none;
+  transition: border-color 0.14s, background 0.14s;
+}
+@media (hover: hover) { .tn-model-row:hover { border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); } }
+.tn-model-row:active { transform: scale(0.99); }
+.tn-model-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tn-model-row.is-selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+.tn-model-label { flex: 0 0 auto; }
+.tn-model-id {
+  flex: 1; min-width: 0; font-size: 11px; font-weight: 500; color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.tn-model-check { flex: 0 0 auto; color: var(--accent); font-weight: 700; }
+.tn-model-loading { display: flex; justify-content: center; padding: 16px 0; }
+.tn-spinner-sm { width: 20px; height: 20px; border-width: 2px; flex: 0 0 auto; }
+
+/* Generating placeholder card — sits at the top of the library list while a
+   story is being written, so the in-progress state lives where the result
+   will appear (the small hint next to the button was easy to miss). */
+.tn-gen-card { border-style: dashed; }
+
 /* Generation variety chips */
 .tn-chips { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0 4px; }
 .tn-chip {
@@ -1439,6 +1518,86 @@ function DeleteConfirmModal({ entry, busy, onConfirm, onCancel }) {
   )
 }
 
+// ---------------------------------------------------------------------------
+// SettingsSheet — the app's one settings surface (everything else moved into
+// the generate sheet). Holds only the story-generation model: a list fetched
+// from the platform registry, with 'Default' meaning "let the platform pick".
+// A tap selects AND persists immediately (prefs.gen_model); Done just closes.
+// Registry failure degrades to the Default-only list — never blocks anything.
+// ---------------------------------------------------------------------------
+function SettingsSheet({ token, prefs, onSelectModel, onClose }) {
+  const current = normalizeGenModel(prefs)
+  // undefined = loading, null = fetch failed, object = registry response.
+  const [registry, setRegistry] = useState(undefined)
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const reg = await loadModelRegistry(token)
+      if (!cancelled) setRegistry(reg)
+    })()
+    return () => { cancelled = true }
+  }, [token])
+
+  const options = useMemo(
+    () => modelOptionsFrom(registry || null, current),
+    [registry, current],
+  )
+
+  return (
+    <div className="tn-scrim" onClick={onClose} role="dialog" aria-modal="true" aria-label="Settings">
+      <div className="tn-sheet" onClick={(e) => e.stopPropagation()}>
+        <p className="tn-sheet-title">Settings</p>
+        <div>
+          <div className="tn-setup-label">Story generation model</div>
+          <p className="tn-setup-note">
+            Used when writing new stories. Default follows the platform&apos;s
+            current model.
+          </p>
+          {registry === undefined ? (
+            <div className="tn-model-loading">
+              <div className="tn-spinner tn-spinner-sm" role="status" aria-label="Loading models" />
+            </div>
+          ) : (
+            <div className="tn-model-list" role="radiogroup" aria-label="Story generation model">
+              {options.map((opt) => (
+                <button
+                  key={opt.id || 'default'}
+                  type="button"
+                  className={`tn-model-row${current === opt.id ? ' is-selected' : ''}`}
+                  role="radio"
+                  aria-checked={current === opt.id}
+                  onClick={() => onSelectModel(opt.id)}
+                >
+                  <span className="tn-model-label">{opt.label}</span>
+                  {opt.id && opt.id !== opt.label && <span className="tn-model-id">{opt.id}</span>}
+                  {current === opt.id && <span className="tn-model-check" aria-hidden="true">✓</span>}
+                </button>
+              ))}
+            </div>
+          )}
+          {registry === null && (
+            <p className="tn-setup-note" style={{ marginTop: 8 }}>
+              Couldn&apos;t load the model list — new stories use the default model.
+            </p>
+          )}
+        </div>
+        <div className="tn-sheet-actions">
+          <button type="button" className="tn-btn tn-btn-primary" onClick={onClose}>Done</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const GearIcon = (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <circle cx="12" cy="12" r="3" />
+    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+  </svg>
+)
+
 const TrashIcon = (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
     strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -1548,23 +1707,32 @@ function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, onIndex
   const handleSheetGenerate = useCallback(async ({ topic, mode, lang_a, lang_b, level }) => {
     setShowGenerateSheet(false)
     // Persist choices back to prefs so the next sheet opens with the same
-    // defaults, and save next_request so generate.sh picks them up.
+    // defaults, and save next_request so generate.sh picks them up. The
+    // generation model rides along in next_request so the per-run record is
+    // self-contained (a settings change mid-run won't retro-affect a retry);
+    // generate.sh also falls back to prefs.gen_model for runs that have no
+    // next_request (e.g. scheduled ones).
     const updatedLangA = lang_a || prefs.lang_a
     const updatedLangB = lang_b || prefs.lang_b
     const updatedLevel = CEFR_LEVELS.includes(level) ? level : (prefs.level || 'B1')
+    const genModel = normalizeGenModel(prefs)
+    const params = {
+      topic,
+      mode,
+      lang_a: updatedLangA,
+      lang_b: updatedLangB,
+      ...(genModel ? { model: genModel } : {}),
+    }
     const next = {
       ...prefs,
       lang_a: updatedLangA,
       lang_b: updatedLangB,
       level: updatedLevel,
-      next_request: { topic, mode, lang_a: updatedLangA, lang_b: updatedLangB },
+      next_request: params,
     }
     onPrefsChange(next)
     await savePrefs(appId, token, next)
-    gen.start(
-      { topic, mode, lang_a: updatedLangA, lang_b: updatedLangB, level: updatedLevel },
-      index || [],
-    )
+    gen.start({ ...params, level: updatedLevel }, index || [])
   }, [appId, token, prefs, onPrefsChange, gen, index])
 
   const confirmDelete = useCallback(async () => {
@@ -1606,6 +1774,7 @@ function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, onIndex
           mode: params.mode || 'free',
           lang_a: params.lang_a,
           lang_b: params.lang_b,
+          ...(params.model ? { model: params.model } : {}),
         },
       }
       onPrefsChange(next)
@@ -1650,20 +1819,35 @@ function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, onIndex
         >
           {genBusy ? 'Generating…' : '+ Generate story'}
         </button>
-        {gen.phase === 'running' && <span className="tn-status-hint">Generating story…</span>}
         {gen.phase === 'done' && <span className="tn-status-hint">Story ready!</span>}
-        {gen.phase === 'stale' && (
-          <>
-            <span className="tn-status-hint">Taking longer than expected.</span>
+        {gen.phase === 'error' && <span className="tn-error-hint">{gen.error}</span>}
+        {errorMsg && <span className="tn-error-hint">{errorMsg}</span>}
+      </div>
+
+      {/* In-progress placeholder card — the new story's seat at the top of
+          the library. Stale state keeps the card (the poll is still running;
+          a late story can still land) and surfaces Retry / Dismiss here. */}
+      {genBusy && (
+        <div className="tn-card tn-gen-card" aria-live="polite">
+          <div className="tn-spinner tn-spinner-sm" aria-hidden="true" />
+          <div className="tn-card-main">
+            <div className="tn-card-title">
+              {gen.phase === 'stale' ? 'Taking longer than expected' : 'Writing your story…'}
+            </div>
+            <div className="tn-card-sub">
+              {gen.params?.lang_b
+                ? `A new ${gen.params.lang_b} story — usually ready in a minute or two.`
+                : 'Usually ready in a minute or two.'}
+            </div>
+          </div>
+          {gen.phase === 'stale' && (
             <span className="tn-stale-actions">
               <button type="button" className="tn-stale-btn" onClick={handleRetry}>Retry</button>
               <button type="button" className="tn-stale-btn" onClick={gen.dismiss}>Dismiss</button>
             </span>
-          </>
-        )}
-        {gen.phase === 'error' && <span className="tn-error-hint">{gen.error}</span>}
-        {errorMsg && <span className="tn-error-hint">{errorMsg}</span>}
-      </div>
+          )}
+        </div>
+      )}
 
       {index === null ? (
         <div className="tn-loading">
@@ -1671,15 +1855,21 @@ function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, onIndex
           <span>Loading stories…</span>
         </div>
       ) : index.length === 0 ? (
-        <div className="tn-empty" style={{ margin: '0 auto' }}>
-          <div className="tn-empty-mark" aria-hidden="true">📖</div>
-          <div className="tn-empty-title">No stories yet</div>
-          <p className="tn-empty-text">
-            Press "Generate story" to create your first{' '}
-            {prefs.lang_b || 'target language'} story at CEFR&nbsp;
-            {adaptLevel(prefs.level || 'B1', prefs.feedback_history)} level.
-          </p>
-        </div>
+        // While the first story is being written the placeholder card above
+        // already says everything — an empty-state lecture under it would
+        // just contradict the "something is happening" signal.
+        genBusy ? null : (
+          <div className="tn-empty" style={{ margin: '0 auto' }}>
+            <div className="tn-empty-mark" aria-hidden="true">📖</div>
+            <div className="tn-empty-title">No stories yet</div>
+            <p className="tn-empty-text">
+              Tap “+ Generate story” to get your first{' '}
+              {prefs.lang_b || 'target language'} story at CEFR&nbsp;
+              {adaptLevel(prefs.level || 'B1', prefs.feedback_history)} level —
+              it takes a minute or two to write.
+            </p>
+          </div>
+        )
       ) : (
         index.map((entry) => {
           const effRating = stories[entry.id]?.rating ?? entry.rating ?? null
@@ -1864,16 +2054,29 @@ function SetupView({ appId, token, prefs, onPrefsChange }) {
 }
 
 // ---------------------------------------------------------------------------
-// Root component. There is no settings screen — languages and level are
-// chosen per-generation in the generate sheet (and remembered in prefs), so
-// the library IS the app. The story index and the generation engine live
-// here because they must survive any view change.
+// Root component. Languages and level are chosen per-generation in the
+// generate sheet (and remembered in prefs), so the library IS the app; the
+// gear opens the one remaining settings surface (the generation model).
+// The story index and the generation engine live here because they must
+// survive any view change.
 // ---------------------------------------------------------------------------
 export default function App({ appId, token }) {
   const [prefs, setPrefs] = useState(null) // null while loading
   const [index, setIndex] = useState(null) // null = loading, [] = empty
+  const [showSettings, setShowSettings] = useState(false)
   const online = useOnline()
   const gen = useGeneration({ appId, token, onStoryReady: setIndex })
+
+  // Selecting a model persists immediately — there is no save button on the
+  // sheet. 'Default' (empty id) removes the key entirely so prefs written by
+  // this version stay readable as "no preference" everywhere.
+  const handleSelectModel = useCallback(async (id) => {
+    const next = { ...prefs }
+    if (id) next.gen_model = id
+    else delete next.gen_model
+    setPrefs(next)
+    await savePrefs(appId, token, next)
+  }, [appId, token, prefs])
 
   // Load prefs + story index on mount.
   useEffect(() => {
@@ -1914,6 +2117,17 @@ export default function App({ appId, token }) {
             )}
           </div>
         </div>
+        <div className="tn-header-right">
+          <button
+            type="button"
+            className="tn-btn tn-btn-ghost tn-btn-icon"
+            aria-label="Settings"
+            title="Settings"
+            onClick={() => setShowSettings(true)}
+          >
+            {GearIcon}
+          </button>
+        </div>
       </header>
 
       <div className="tn-scroll">
@@ -1928,6 +2142,15 @@ export default function App({ appId, token }) {
           gen={gen}
         />
       </div>
+
+      {showSettings && (
+        <SettingsSheet
+          token={token}
+          prefs={prefs}
+          onSelectModel={handleSelectModel}
+          onClose={() => setShowSettings(false)}
+        />
+      )}
     </div>
   )
 }
