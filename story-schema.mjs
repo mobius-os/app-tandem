@@ -106,6 +106,15 @@ export function removeStoryFromIndex(index, storyId) {
   return index.filter((e) => !(e && typeof e === 'object' && e.id === storyId))
 }
 
+// Mirror a rating onto the story's index entry so the library card can show
+// and edit it without loading the full story record.
+export function setRatingInIndex(index, storyId, verdict) {
+  if (!Array.isArray(index)) return []
+  return index.map((e) =>
+    e && typeof e === 'object' && e.id === storyId ? { ...e, rating: verdict } : e,
+  )
+}
+
 // Build a normalized index entry from a story (for storing in stories/index.json).
 export function buildIndexEntry(story) {
   return {

@@ -14,6 +14,7 @@ import {
   normalizeStory,
   buildIndexEntry,
   removeStoryFromIndex,
+  setRatingInIndex,
   totalGlossaryCount,
   meetsContentBar,
 } from '../story-schema.mjs'
@@ -43,6 +44,7 @@ test('inlined schema in index.jsx stays in sync with story-schema.mjs', () => {
     "const STORY_RATINGS = ['too_simple', 'just_right', 'too_complex']",
     "if (STORY_RATINGS.includes(story.rating)) normalized.rating = story.rating",
     "return index.filter((e) => !(e && typeof e === 'object' && e.id === storyId))",
+    "e && typeof e === 'object' && e.id === storyId ? { ...e, rating: verdict } : e,",
   ]
   for (const snippet of distinctive) {
     assert.ok(
@@ -413,6 +415,31 @@ test('removeStoryFromIndex tolerates malformed entries', () => {
   const messy = [null, 'junk', { id: 'aaa' }, { noId: true }]
   const next = removeStoryFromIndex(messy, 'aaa')
   assert.deepEqual(next, [null, 'junk', { noId: true }])
+})
+
+// ---------------------------------------------------------------------------
+// setRatingInIndex — mirrors a rating onto the matching index entry so the
+// library card can show/edit it without loading the story record.
+// ---------------------------------------------------------------------------
+test('setRatingInIndex stamps exactly the matching entry', () => {
+  const next = setRatingInIndex(SAMPLE_INDEX, 'bbb', 'just_right')
+  assert.equal(next.find((e) => e.id === 'bbb').rating, 'just_right')
+  assert.equal(next.find((e) => e.id === 'aaa').rating, undefined)
+  assert.equal(next.find((e) => e.id === 'ccc').rating, undefined)
+})
+
+test('setRatingInIndex replaces an existing rating', () => {
+  const rated = [{ id: 'aaa', rating: 'too_simple' }]
+  const next = setRatingInIndex(rated, 'aaa', 'too_complex')
+  assert.equal(next[0].rating, 'too_complex')
+})
+
+test('setRatingInIndex does not mutate the input and tolerates junk', () => {
+  const messy = [null, 'junk', { id: 'aaa' }]
+  const next = setRatingInIndex(messy, 'aaa', 'just_right')
+  assert.deepEqual(messy[2], { id: 'aaa' })
+  assert.deepEqual(next, [null, 'junk', { id: 'aaa', rating: 'just_right' }])
+  assert.deepEqual(setRatingInIndex(null, 'aaa', 'just_right'), [])
 })
 
 // ---------------------------------------------------------------------------

@@ -14,6 +14,13 @@ const CEFR_LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2']
 // recent ones back into the next generation prompt.
 const STORY_RATINGS = ['too_simple', 'just_right', 'too_complex']
 
+const RATE_OPTIONS = [
+  { verdict: 'too_simple', label: 'Too easy' },
+  { verdict: 'just_right', label: 'Just right' },
+  { verdict: 'too_complex', label: 'Too hard' },
+]
+const RATE_LABELS = Object.fromEntries(RATE_OPTIONS.map((o) => [o.verdict, o.label]))
+
 function adaptLevel(currentLevel, feedbackHistory) {
   if (!Array.isArray(feedbackHistory) || feedbackHistory.length === 0) {
     return currentLevel
@@ -91,6 +98,15 @@ function meetsContentBar(story) {
 function removeStoryFromIndex(index, storyId) {
   if (!Array.isArray(index)) return []
   return index.filter((e) => !(e && typeof e === 'object' && e.id === storyId))
+}
+
+// Mirror a rating onto the story's index entry so the library card can show
+// and edit it without loading the full story record.
+function setRatingInIndex(index, storyId, verdict) {
+  if (!Array.isArray(index)) return []
+  return index.map((e) =>
+    e && typeof e === 'object' && e.id === storyId ? { ...e, rating: verdict } : e,
+  )
 }
 
 function buildIndexEntry(story) {
@@ -639,6 +655,19 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 }
 .tn-card-del:active { transform: scale(0.92); }
 .tn-card-del:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Rated cards grow a quiet second row: the rating, tappable to change. */
+.tn-card.has-rate { flex-direction: column; align-items: stretch; gap: 10px; }
+.tn-card-row { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.tn-card-rate-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tn-card-rating {
+  min-height: 32px; padding: 4px 12px; border-radius: 16px;
+  border: 1px solid var(--border); background: transparent;
+  color: var(--muted); font-size: 12px; font-weight: 600;
+  cursor: pointer; font-family: var(--font);
+  touch-action: manipulation; user-select: none;
+}
+@media (hover: hover) { .tn-card-rating:hover { border-color: var(--accent); color: var(--text); } }
+.tn-card-rating:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .tn-offline-banner {
   margin: 0 0 12px; padding: 8px 12px; border-radius: 8px;
   background: var(--accent-dim, color-mix(in srgb, var(--accent) 12%, transparent));
@@ -796,12 +825,31 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 34%, transparent);
 }
 
-/* Difficulty rating — a compact one-line chip row after the final paragraph.
-   Deliberately quiet: no card chrome, appears exactly when reading ends. */
-.tn-rate-row {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  padding: 18px 18px 28px;
+/* Difficulty bar — floats over the reader bottom edge, outside both panes.
+   Slides up when an unrated story is read to the end; the noted state fades
+   itself out (pure CSS animation; onAnimationEnd unmounts it). */
+.tn-rate-bar {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 8;
+  display: flex; align-items: center; justify-content: center;
+  gap: 8px; flex-wrap: wrap;
+  padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px));
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  border-top: 1px solid var(--border);
   font-size: 13px; color: var(--muted);
+  animation: tn-rate-bar-in 0.22s ease-out;
+}
+@keyframes tn-rate-bar-in {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+.tn-rate-bar.is-noted {
+  animation: tn-rate-bar-noted 1.8s ease forwards;
+}
+@keyframes tn-rate-bar-noted {
+  0% { opacity: 1; }
+  70% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(100%); }
 }
 .tn-rate-label { font-weight: 600; }
 .tn-rate-chip {
@@ -967,6 +1015,13 @@ function computeSyncScrollTop(scrollTop, srcOffsets, dstOffsets) {
 function StoryReader({ story, onClose, onRate }) {
   const [bLead, setBLead] = useState(false)
   const [rating, setRating] = useState(story.rating || null)
+  // The difficulty bar lives OUTSIDE the two language panes (it can't fairly
+  // belong to either split). It appears once the reader reaches the end of an
+  // UNRATED story; after rating, it shows a brief note and goes away — from
+  // then on the rating is edited from the story's library card.
+  const [atEnd, setAtEnd] = useState(false)
+  const [showNoted, setShowNoted] = useState(false)
+  const atEndRef = useRef(false)
   const [splitRatio, setSplitRatio] = useState(() => {
     try {
       const v = parseFloat(localStorage.getItem('tn-split-ratio'))
@@ -1003,6 +1058,31 @@ function StoryReader({ story, onClose, onRate }) {
   // Cleanup rAF on unmount
   useEffect(() => () => { if (rafRef.current) cancelAnimationFrame(rafRef.current) }, [])
 
+  // Latch "reached the end" — once true it stays true for this story, so the
+  // rate bar doesn't flicker as the reader scrolls back up.
+  const maybeLatchEnd = useCallback((pane) => {
+    if (atEndRef.current || !pane) return
+    if (pane.scrollTop + pane.clientHeight >= pane.scrollHeight - 48) {
+      atEndRef.current = true
+      setAtEnd(true)
+    }
+  }, [])
+
+  // A story short enough to not scroll counts as "at end" immediately.
+  useEffect(() => {
+    atEndRef.current = false
+    setAtEnd(false)
+    setShowNoted(false)
+    const raf = requestAnimationFrame(() => {
+      const pane = botPaneRef.current
+      if (pane && pane.scrollHeight <= pane.clientHeight + 4) {
+        atEndRef.current = true
+        setAtEnd(true)
+      }
+    })
+    return () => cancelAnimationFrame(raf)
+  }, [story.id])
+
   const handleTopScroll = useCallback(() => {
     if (isSyncingRef.current) return
     if (rafRef.current) cancelAnimationFrame(rafRef.current)
@@ -1010,6 +1090,7 @@ function StoryReader({ story, onClose, onRate }) {
       const topPane = topPaneRef.current
       const botPane = botPaneRef.current
       if (!topPane || !botPane) return
+      maybeLatchEnd(topPane)
       const srcOffsets = computeParaOffsets(topParaRefs)
       const dstOffsets = computeParaOffsets(botParaRefs)
       const target = computeSyncScrollTop(topPane.scrollTop, srcOffsets, dstOffsets)
@@ -1018,7 +1099,7 @@ function StoryReader({ story, onClose, onRate }) {
       botPane.scrollTop = target
       requestAnimationFrame(() => { isSyncingRef.current = false })
     })
-  }, [topParaRefs, botParaRefs])
+  }, [topParaRefs, botParaRefs, maybeLatchEnd])
 
   const handleBotScroll = useCallback(() => {
     if (isSyncingRef.current) return
@@ -1027,6 +1108,7 @@ function StoryReader({ story, onClose, onRate }) {
       const topPane = topPaneRef.current
       const botPane = botPaneRef.current
       if (!topPane || !botPane) return
+      maybeLatchEnd(botPane)
       const srcOffsets = computeParaOffsets(botParaRefs)
       const dstOffsets = computeParaOffsets(topParaRefs)
       const target = computeSyncScrollTop(botPane.scrollTop, srcOffsets, dstOffsets)
@@ -1035,7 +1117,7 @@ function StoryReader({ story, onClose, onRate }) {
       topPane.scrollTop = target
       requestAnimationFrame(() => { isSyncingRef.current = false })
     })
-  }, [topParaRefs, botParaRefs])
+  }, [topParaRefs, botParaRefs, maybeLatchEnd])
 
   const handleDividerPointerDown = useCallback((e) => {
     e.preventDefault()
@@ -1088,6 +1170,7 @@ function StoryReader({ story, onClose, onRate }) {
 
   const handleRate = useCallback((verdict) => {
     setRating(verdict)
+    setShowNoted(true)
     onRate(story, verdict)
   }, [story, onRate])
 
@@ -1188,28 +1271,35 @@ function StoryReader({ story, onClose, onRate }) {
               />
             </div>
           ))}
-          {/* Difficulty rating — one quiet row right after the last paragraph */}
-          <div className="tn-rate-row">
-            <span className="tn-rate-label">How was it?</span>
-            {[
-              { verdict: 'too_simple', label: 'Too easy' },
-              { verdict: 'just_right', label: 'Just right' },
-              { verdict: 'too_complex', label: 'Too hard' },
-            ].map(({ verdict, label }) => (
-              <button
-                key={verdict}
-                type="button"
-                className={`tn-rate-chip${rating === verdict ? ' is-selected' : ''}`}
-                onClick={() => handleRate(verdict)}
-                aria-pressed={rating === verdict}
-              >
-                {label}
-              </button>
-            ))}
-            {rating && <span className="tn-rate-note">Noted — the next story will adapt.</span>}
-          </div>
         </div>
       </div>
+
+      {/* Difficulty bar — floats over the reader, belonging to NEITHER pane.
+          Shows only when an unrated story has been read to the end; after
+          rating it confirms briefly and retires (edit later from the card). */}
+      {!rating && atEnd && (
+        <div className="tn-rate-bar" role="group" aria-label="Rate story difficulty">
+          <span className="tn-rate-label">How was it?</span>
+          {RATE_OPTIONS.map(({ verdict, label }) => (
+            <button
+              key={verdict}
+              type="button"
+              className="tn-rate-chip"
+              onClick={() => handleRate(verdict)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+      {rating && showNoted && (
+        <div
+          className="tn-rate-bar is-noted"
+          onAnimationEnd={() => setShowNoted(false)}
+        >
+          <span className="tn-rate-note">Noted — the next story will adapt.</span>
+        </div>
+      )}
     </div>
   )
 }
@@ -1372,6 +1462,7 @@ function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, onIndex
   const [showGenerateSheet, setShowGenerateSheet] = useState(false)
   const [pendingDelete, setPendingDelete] = useState(null)
   const [deleting, setDeleting] = useState(false)
+  const [rateEditId, setRateEditId] = useState(null)
   const navRef = useRef(null)
   const errTimerRef = useRef(null)
 
@@ -1424,6 +1515,11 @@ function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, onIndex
     const updated = { ...story, rating: verdict }
     setStories((prev) => ({ ...prev, [story.id]: updated }))
     await putJSON(`/api/storage/apps/${appId}/stories/${story.id}.json`, token, updated, appId)
+    // Mirror onto the index entry so the library card shows the rating
+    // (and can edit it) without loading the full story record.
+    const nextIndex = setRatingInIndex(index || [], story.id, verdict)
+    onIndexChange(nextIndex)
+    await putJSON(`/api/storage/apps/${appId}/stories/index.json`, token, nextIndex, appId)
     const history = [...(prefs.feedback_history || [])]
     // Re-rating the same story replaces its last entry instead of stacking.
     if (history.length && history[history.length - 1]?.story_id === story.id) history.pop()
@@ -1431,7 +1527,23 @@ function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, onIndex
     const next = { ...prefs, feedback_history: history }
     onPrefsChange(next)
     await savePrefs(appId, token, next)
-  }, [appId, token, prefs, onPrefsChange])
+  }, [appId, token, prefs, onPrefsChange, index, onIndexChange])
+
+  // Rate (or re-rate) straight from a library card — loads the story record
+  // on demand since cards only carry index entries.
+  const rateFromCard = useCallback(async (entry, verdict) => {
+    setRateEditId(null)
+    let story = stories[entry.id]
+    if (!story) {
+      story = await loadStory(appId, token, entry.id)
+      if (!story) {
+        flashError('Could not load story.')
+        return
+      }
+      setStories((prev) => ({ ...prev, [story.id]: story }))
+    }
+    await handleRate(story, verdict)
+  }, [stories, appId, token, handleRate, flashError])
 
   const handleSheetGenerate = useCallback(async ({ topic, mode, lang_a, lang_b, level }) => {
     setShowGenerateSheet(false)
@@ -1569,29 +1681,60 @@ function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, onIndex
           </p>
         </div>
       ) : (
-        index.map((entry) => (
-          <div key={entry.id} className="tn-card">
-            <button
-              type="button"
-              className="tn-card-open"
-              onClick={() => openStory(entry)}
-            >
-              <div className="tn-card-main">
-                <div className="tn-card-title">{entry.title_a}</div>
-                <div className="tn-card-sub">{entry.title_b} · {entry.lang_a} / {entry.lang_b}</div>
+        index.map((entry) => {
+          const effRating = stories[entry.id]?.rating ?? entry.rating ?? null
+          return (
+            <div key={entry.id} className={`tn-card${effRating ? ' has-rate' : ''}`}>
+              <div className="tn-card-row">
+                <button
+                  type="button"
+                  className="tn-card-open"
+                  onClick={() => openStory(entry)}
+                >
+                  <div className="tn-card-main">
+                    <div className="tn-card-title">{entry.title_a}</div>
+                    <div className="tn-card-sub">{entry.title_b} · {entry.lang_a} / {entry.lang_b}</div>
+                  </div>
+                  <span className="tn-level-pill">{entry.level}</span>
+                </button>
+                <button
+                  type="button"
+                  className="tn-card-del"
+                  aria-label={`Delete ${entry.title_a}`}
+                  onClick={() => setPendingDelete(entry)}
+                >
+                  {TrashIcon}
+                </button>
               </div>
-              <span className="tn-level-pill">{entry.level}</span>
-            </button>
-            <button
-              type="button"
-              className="tn-card-del"
-              aria-label={`Delete ${entry.title_a}`}
-              onClick={() => setPendingDelete(entry)}
-            >
-              {TrashIcon}
-            </button>
-          </div>
-        ))
+              {effRating && (
+                <div className="tn-card-rate-row">
+                  {rateEditId === entry.id ? (
+                    RATE_OPTIONS.map(({ verdict, label }) => (
+                      <button
+                        key={verdict}
+                        type="button"
+                        className={`tn-rate-chip${effRating === verdict ? ' is-selected' : ''}`}
+                        onClick={() => rateFromCard(entry, verdict)}
+                        aria-pressed={effRating === verdict}
+                      >
+                        {label}
+                      </button>
+                    ))
+                  ) : (
+                    <button
+                      type="button"
+                      className="tn-card-rating"
+                      onClick={() => setRateEditId(entry.id)}
+                      aria-label={`Change difficulty rating (currently ${RATE_LABELS[effRating] || effRating})`}
+                    >
+                      {RATE_LABELS[effRating] || effRating} <span aria-hidden="true">✎</span>
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )
+        })
       )}
 
       {showGenerateSheet && (
