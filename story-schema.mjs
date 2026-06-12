@@ -7,6 +7,11 @@
 
 export const CEFR_LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2']
 
+// Difficulty verdicts a reader can give a story. Stored both on the story
+// record (story.rating) and in prefs.feedback_history; generate.sh feeds the
+// recent ones back into the next generation prompt.
+export const STORY_RATINGS = ['too_simple', 'just_right', 'too_complex']
+
 // Return the next CEFR level up or down from the given level.
 // Used to adapt difficulty based on feedback history.
 export function adaptLevel(currentLevel, feedbackHistory) {
@@ -44,6 +49,8 @@ export function lookupGlossary(para, word) {
 
 // Validate a parsed story object, returning a normalized version or null.
 // Accepts stories from storage (they may have been written by older code).
+// LENIENT BY DESIGN: optional fields (glossary, rating) may be absent — a
+// read-time validator that requires them would brick the existing library.
 export function normalizeStory(story) {
   if (!story || typeof story !== 'object') return null
   const id = typeof story.id === 'string' ? story.id.trim() : ''
@@ -75,7 +82,9 @@ export function normalizeStory(story) {
     paragraphs.push({ a, b, glossary })
   }
   if (paragraphs.length < 1) return null
-  return { id, title_a, title_b, lang_a, lang_b, level, created, paragraphs }
+  const normalized = { id, title_a, title_b, lang_a, lang_b, level, created, paragraphs }
+  if (STORY_RATINGS.includes(story.rating)) normalized.rating = story.rating
+  return normalized
 }
 
 // Total glossary entries across all paragraphs
@@ -88,6 +97,13 @@ export function totalGlossaryCount(story) {
 export function meetsContentBar(story) {
   if (!story) return false
   return story.paragraphs.length >= 10 && totalGlossaryCount(story) >= 15
+}
+
+// Drop a story's entry from the index array (for stories/index.json after a
+// delete). Tolerates a non-array index and malformed entries.
+export function removeStoryFromIndex(index, storyId) {
+  if (!Array.isArray(index)) return []
+  return index.filter((e) => !(e && typeof e === 'object' && e.id === storyId))
 }
 
 // Build a normalized index entry from a story (for storing in stories/index.json).

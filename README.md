@@ -1,59 +1,59 @@
 # Tandem
 
-Parallel bilingual stories for language learning. The Möbius agent generates a short story in two languages side-by-side; tap any word to see its meaning or paired paragraph.
+Parallel bilingual stories for language learning. The Möbius agent generates a story in two languages shown in a split-pane reader; tap any word to highlight it, its sentence context, and its translation inline in both panes.
 
-> **Icon note:** The icon follows the catalog's glossy-3D infinity-motif pipeline. `icon.png` is absent from this repository — generate it through the standard catalog icon process before publishing.
+> **Icon note:** The icon follows the catalog's glossy-3D infinity-motif pipeline (`icon.png` on this repo's main).
 
 ## What it does
 
-1. You set a base language (the one you know) and a target language (the one you're learning), plus a starting CEFR level (A1–C2).
-2. Tap **Generate story** to have the agent write a fresh bilingual story aligned paragraph-by-paragraph, with 8–15 glossary entries per paragraph.
-3. Read the story in interleaved mode (phone) or side-by-side columns (tablet/desktop — CSS-only, same DOM). The language-toggle pill swaps which language leads.
-4. Tap any word: if it's in the paragraph's glossary, you see the pair + note; otherwise you see the full paired paragraph with the tapped word highlighted.
-5. Rate each story (too simple / just right / too complex) — the next story's level adapts automatically based on your last three ratings.
+1. First run asks for your base language, target language, and CEFR level — after that, every generation is configured directly in the **Generate story** sheet (languages, level, topic, genre; all remembered). There is no settings screen.
+2. Tap **Generate story** to have the agent write a fresh bilingual story, 14–20 paragraphs aligned pair-by-pair, with a per-paragraph glossary covering all non-trivial content words. Generation survives navigation and even an app reload: a pending record (`generation-pending.json`) is persisted to storage and the root component resumes the poll.
+3. Read in the split-pane reader (drag the slim divider to resize; panes sync-scroll paragraph-by-paragraph; the pill swaps which language leads).
+4. Tap any word: the word gets a strong highlight, its sentence a soft one, and the OTHER pane highlights the aligned sentence (index-clamped) — plus the exact translated word when the story's glossary maps it. Tap the same word (or anywhere else) to clear. No bottom sheets.
+5. After the last paragraph a quiet one-line row asks "How was it?" (Too easy / Just right / Too hard). The rating is stored on the story record and in `prefs.feedback_history`; the next generation both adapts the CEFR level (last 3 ratings) and feeds the ratings into the prompt to steer difficulty within the level.
+6. Delete a story from the library card's trash affordance — an in-app confirm modal (the iframe sandbox silently no-ops `window.confirm`) removes the story file and its index entry.
 
 ## Storage layout
 
 | Path | Contents |
 |------|----------|
-| `prefs.json` | `{ lang_a, lang_b, level, feedback_history: [{story_id, verdict, ts}] }` |
+| `prefs.json` | `{ lang_a, lang_b, level, feedback_history: [{story_id, verdict, ts}], next_request }` |
 | `stories/index.json` | Array of index entries (id, titles, languages, level, created) |
-| `stories/<id>.json` | Full story: `{ id, title_a, title_b, lang_a, lang_b, level, created, paragraphs }` |
+| `stories/<id>.json` | Full story: `{ id, title_a, title_b, lang_a, lang_b, level, created, paragraphs, rating? }` |
+| `generation-pending.json` | Present only while a generation is in flight: `{ started_at, params, known_ids }` |
 
 Each paragraph: `{ a: string, b: string, glossary: [{word_a, word_b, note?}] }`.
 
-The full story files are large (a few KB each); the index stays lightweight so the story list loads fast.
+**Lenient read is a hard rule.** `normalizeStory` must accept stories written by any past version — missing `glossary`, missing `rating`, short paragraph counts — and degrade gracefully (context-only highlighting when there is no glossary). A strict read-time validator once bricked the whole library; never require generation-side fields on read.
 
 ## How generation works
 
 Generation is triggered by `POST /api/apps/<id>/run-job`, which runs `generate.sh <APP_ID>`:
 
-1. Reads `prefs.json` to get the language pair and CEFR level.
-2. Applies the feedback history to the level (too-simple ratings push it up; too-complex push it down — last 3 entries, score threshold ≥ 1).
-3. Composes `system-prompt.md` (baked schema) with the generation parameters.
+1. Reads `prefs.json` for the language pair, CEFR level, topic/mode (`next_request`), and feedback history.
+2. Applies the feedback history to the level (too-easy ratings push it up; too-hard push it down — last 3 entries), and passes the recent ratings into the prompt so the model steers difficulty within the level.
+3. Composes `system-prompt.md` (baked schema; 14–20 paragraph pairs; glossary covering all non-trivial content words verbatim) with the generation parameters.
 4. Runs the Claude CLI with NO tools — stories are fictional, no web search needed. `--max-turns 3`.
 5. Extracts and validates the JSON story object from stdout.
 6. Writes `stories/<id>.json` and updates `stories/index.json`.
 7. Sends a push notification.
 
+The frontend never owns the run: it persists `generation-pending.json` (params + `known_ids` snapshot), POSTs run-job, and polls the index from the root component. The poll detects the new story by diffing against `known_ids`, then clears the pending record. A record older than ~6 minutes is treated as stale and the UI offers Retry / Dismiss (the poll keeps running so a late story still lands).
+
 Security model: the service token is held by `generate.sh` and never exposed to the model. The model only produces a JSON story; the shell script does the PUT.
 
-## Schema
+## Pure helper modules
 
-See `story-schema.mjs` for the canonical pure helpers. `index.jsx` inlines them (the esbuild compile path can't import sibling `.mjs` files). The test suite (`__tests__/story-schema.test.mjs`) asserts the inline copy stays in sync.
+`index.jsx` inlines two React-free modules (the esbuild compile path can't import sibling `.mjs` files); each test file asserts the inline copy stays in sync:
 
-Key functions:
-
-- `adaptLevel(currentLevel, feedbackHistory)` — pure, testable level adaptation.
-- `lookupGlossary(para, word)` — case-insensitive glossary lookup.
-- `normalizeStory(story)` — validates + normalises a stored story; returns null on failure.
-- `buildIndexEntry(story)` — strips paragraphs for the lightweight index.
+- `story-schema.mjs` — `adaptLevel`, `lookupGlossary`, `normalizeStory` (lenient), `removeStoryFromIndex`, `buildIndexEntry`, `STORY_RATINGS`.
+- `text-align.mjs` — `tokenizeParagraph` (word + sentence indices), `sentenceCount`, `alignSentenceIndex` (clamped sentence-by-index pane alignment), `stripWordPunct`, `findPhraseTokenRange` (verbatim glossary phrase → token range).
 
 ## Dev loop
 
 ```bash
 # Run the tests
-node --test __tests__/story-schema.test.mjs
+node --test __tests__/
 
 # Compile smoke (must pass before shipping)
 /home/hmzmrzx/projects/node_modules/.bin/esbuild index.jsx \

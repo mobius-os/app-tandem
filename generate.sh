@@ -83,7 +83,7 @@ PREFS_CODE=$(curl -sS -o "$PREFS_FILE" -w "%{http_code}" \
   "$API_BASE_URL/api/storage/apps/$APP_ID/prefs.json") || PREFS_CODE=000
 
 # Parse prefs; fall back to English/Spanish B1 defaults.
-# Output 5 tab-separated fields: lang_a, lang_b, level, topic, mode
+# Output 6 tab-separated fields: lang_a, lang_b, level, topic, mode, ratings
 PARAMS=$(python3 - "$PREFS_FILE" "$PREFS_CODE" <<'PY'
 import json
 import sys
@@ -106,19 +106,31 @@ level = prefs.get("level") or defaults["level"]
 if level not in CEFR:
     level = defaults["level"]
 
-# Adapt level from feedback history (last 3 entries).
+# Adapt level from feedback history (last 3 entries), and surface those
+# recent ratings to the model so it can fine-tune difficulty WITHIN the level.
+ratings = "(none)"
 history = prefs.get("feedback_history") or []
 if isinstance(history, list):
     recent = history[-3:]
     score = 0
+    labels = []
+    verdict_label = {
+        "too_simple": "too easy",
+        "just_right": "just right",
+        "too_complex": "too hard",
+    }
     for entry in recent:
         if not isinstance(entry, dict):
             continue
         v = entry.get("verdict", "")
+        if v in verdict_label:
+            labels.append(verdict_label[v])
         if v == "too_simple":
             score += 1
         elif v == "too_complex":
             score -= 1
+    if labels:
+        ratings = ", ".join(labels)
     idx = CEFR.index(level)
     if score > 0:
         level = CEFR[min(idx + 1, len(CEFR) - 1)]
@@ -141,7 +153,7 @@ if req_lang_a:
 if req_lang_b:
     lang_b = req_lang_b
 
-print(f"{lang_a}\t{lang_b}\t{level}\t{topic}\t{mode}")
+print(f"{lang_a}\t{lang_b}\t{level}\t{topic}\t{mode}\t{ratings}")
 PY
 )
 LANG_A="${PARAMS%%$'\t'*}"
@@ -151,8 +163,10 @@ REST2="${REST1#*$'\t'}"
 LEVEL="${REST2%%$'\t'*}"
 REST3="${REST2#*$'\t'}"
 TOPIC="${REST3%%$'\t'*}"
-MODE="${REST3#*$'\t'}"
-log "Generating level=$LEVEL mode=$MODE story: $LANG_A / $LANG_B"
+REST4="${REST3#*$'\t'}"
+MODE="${REST4%%$'\t'*}"
+RATINGS="${REST4#*$'\t'}"
+log "Generating level=$LEVEL mode=$MODE story: $LANG_A / $LANG_B (recent ratings: $RATINGS)"
 
 # 2b. Fetch recent story titles to avoid repeats.
 RECENT_TITLES="(none yet)"
@@ -182,6 +196,8 @@ PROMPT_FILE="$WORK_DIR/prompt.md"
   printf 'CEFR level: %s\n' "$LEVEL"
   printf 'Mode: %s   (one of: free | classic | daily_life | travel)\n' "$MODE"
   printf 'Topic: %s  (empty = no constraint; non-empty = use this as the story'"'"'s theme/setting)\n' "$TOPIC"
+  printf 'Recent difficulty ratings from the reader (oldest first): %s\n' "$RATINGS"
+  printf 'Steer within the CEFR level: ratings leaning "too hard" mean simpler sentences and more common vocabulary; "too easy" means richer structures and rarer words.\n'
   printf '\nRecent story titles to avoid repeating (titles in lang_a):\n'
   printf '%s\n' "$RECENT_TITLES"
   printf '\nGenerate a fresh story now. Output ONLY the JSON object described above.\n'

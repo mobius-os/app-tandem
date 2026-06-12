@@ -9,6 +9,11 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 
 const CEFR_LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2']
 
+// Difficulty verdicts a reader can give a story. Stored both on the story
+// record (story.rating) and in prefs.feedback_history; generate.sh feeds the
+// recent ones back into the next generation prompt.
+const STORY_RATINGS = ['too_simple', 'just_right', 'too_complex']
+
 function adaptLevel(currentLevel, feedbackHistory) {
   if (!Array.isArray(feedbackHistory) || feedbackHistory.length === 0) {
     return currentLevel
@@ -68,7 +73,9 @@ function normalizeStory(story) {
     paragraphs.push({ a, b, glossary })
   }
   if (paragraphs.length < 1) return null
-  return { id, title_a, title_b, lang_a, lang_b, level, created, paragraphs }
+  const normalized = { id, title_a, title_b, lang_a, lang_b, level, created, paragraphs }
+  if (STORY_RATINGS.includes(story.rating)) normalized.rating = story.rating
+  return normalized
 }
 
 function totalGlossaryCount(story) {
@@ -79,6 +86,11 @@ function totalGlossaryCount(story) {
 function meetsContentBar(story) {
   if (!story) return false
   return story.paragraphs.length >= 10 && totalGlossaryCount(story) >= 15
+}
+
+function removeStoryFromIndex(index, storyId) {
+  if (!Array.isArray(index)) return []
+  return index.filter((e) => !(e && typeof e === 'object' && e.id === storyId))
 }
 
 function buildIndexEntry(story) {
@@ -93,6 +105,74 @@ function buildIndexEntry(story) {
   }
 }
 // ===== INLINE-SCHEMA END =====
+
+// ===== INLINE-TEXT-ALIGN START (canonical source: text-align.mjs) =====
+// Same inlining rationale as the schema block above: the installer compiles
+// only index.jsx. text-align.mjs is the canonical, unit-tested copy.
+
+const SENTENCE_END_RE = /[.!?…。！？](["'’”»)\]]*)$/
+
+function tokenizeParagraph(text) {
+  if (typeof text !== 'string' || !text) return []
+  const parts = text.split(/(\s+)/)
+  const tokens = []
+  let sentIdx = 0
+  let wordIdx = 0
+  for (const part of parts) {
+    if (!part) continue
+    const isWord = !/^\s+$/.test(part)
+    tokens.push({ text: part, isWord, wordIdx: isWord ? wordIdx : -1, sentIdx })
+    if (isWord) {
+      wordIdx += 1
+      if (SENTENCE_END_RE.test(part)) sentIdx += 1
+    }
+  }
+  return tokens
+}
+
+function sentenceCount(tokens) {
+  let max = -1
+  for (const t of tokens) {
+    if (t.isWord && t.sentIdx > max) max = t.sentIdx
+  }
+  return max + 1
+}
+
+function alignSentenceIndex(srcIdx, dstCount) {
+  if (!Number.isInteger(srcIdx) || srcIdx < 0) return -1
+  if (!Number.isInteger(dstCount) || dstCount < 1) return -1
+  return Math.min(srcIdx, dstCount - 1)
+}
+
+function stripWordPunct(token) {
+  if (typeof token !== 'string') return ''
+  return token.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '')
+}
+
+function findPhraseTokenRange(tokens, phrase) {
+  if (typeof phrase !== 'string' || !phrase.trim()) return null
+  const target = phrase
+    .trim()
+    .split(/\s+/)
+    .map((w) => stripWordPunct(w).toLowerCase())
+    .filter(Boolean)
+  if (target.length === 0) return null
+  const words = tokens.filter((t) => t.isWord)
+  for (let i = 0; i + target.length <= words.length; i++) {
+    let match = true
+    for (let j = 0; j < target.length; j++) {
+      if (stripWordPunct(words[i + j].text).toLowerCase() !== target[j]) {
+        match = false
+        break
+      }
+    }
+    if (match) {
+      return { start: words[i].wordIdx, end: words[i + target.length - 1].wordIdx }
+    }
+  }
+  return null
+}
+// ===== INLINE-TEXT-ALIGN END =====
 
 // ---------------------------------------------------------------------------
 // Storage helpers — route through window.mobius.storage when available (for
@@ -148,6 +228,28 @@ async function putJSON(url, token, obj, appId) {
   }
 }
 
+async function deleteJSON(url, token, appId) {
+  const path = storagePathFromUrl(url, appId)
+  const native = path ? getRuntimeStorage() : null
+  if (native) {
+    const fn = native.remove || native.del
+    if (typeof fn === 'function') {
+      try { await fn.call(native, path); return { ok: true } }
+      catch { /* fall through */ }
+    }
+  }
+  try {
+    const r = await fetch(url, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    // 404 counts as deleted — the file is gone either way.
+    return { ok: r.ok || r.status === 404, status: r.status }
+  } catch {
+    return { ok: false, status: 0 }
+  }
+}
+
 // List story entries from storage; returns [] on network failure.
 async function loadStoryIndex(appId, token) {
   const res = await getJSON(
@@ -173,6 +275,124 @@ async function loadPrefs(appId, token) {
 
 async function savePrefs(appId, token, prefs) {
   return putJSON(`/api/storage/apps/${appId}/prefs.json`, token, prefs, appId)
+}
+
+// ---------------------------------------------------------------------------
+// Generation — app-level, storage-backed.
+//
+// Generation state must NOT live in any view's component state: a view that
+// unmounts (navigation, reader overlay, app reload) would orphan the poll and
+// the "Generating…" indicator with it. Instead a pending record is persisted
+// to storage (generation-pending.json: { started_at, params, known_ids }) and
+// the poll loop is owned by the root App component, which never unmounts
+// while the app is open. On mount the hook re-reads the pending record, so
+// even a full app reload resumes the indicator and the poll.
+//
+// The actual generation runs server-side (generate.sh via POST run-job), so
+// no chat mount is needed — the pending record + index poll is the whole
+// contract. The poll detects completion by diffing the story index against
+// the ids known when generation started (stored in the record, so a resume
+// after reload still diffs correctly).
+// ---------------------------------------------------------------------------
+const GEN_POLL_MS = 4000
+// generate.sh self-kills at TANDEM_TIMEOUT (300s); past this the record is
+// presumed orphaned and the UI offers Retry / Dismiss. The poll keeps
+// running while stale so a late story still surfaces.
+const GEN_STALE_MS = 6 * 60_000
+
+function pendingUrl(appId) {
+  return `/api/storage/apps/${appId}/generation-pending.json`
+}
+
+function useGeneration({ appId, token, onStoryReady }) {
+  const [gen, setGen] = useState({ phase: 'idle', startedAt: 0, params: null, error: '' })
+  const pollRef = useRef(null)
+  const toastRef = useRef(null)
+  const onReadyRef = useRef(onStoryReady)
+  onReadyRef.current = onStoryReady
+
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
+  }, [])
+
+  const beginPolling = useCallback((pending) => {
+    stopPolling()
+    const startedAt = Date.parse(pending.started_at) || Date.now()
+    const known = new Set(Array.isArray(pending.known_ids) ? pending.known_ids : [])
+    const params = pending.params || null
+    const phaseFor = () => (Date.now() - startedAt > GEN_STALE_MS ? 'stale' : 'running')
+    setGen({ phase: phaseFor(), startedAt, params, error: '' })
+    pollRef.current = setInterval(async () => {
+      const entries = await loadStoryIndex(appId, token)
+      const fresh = entries.find((e) => e && !known.has(e.id))
+      if (fresh) {
+        stopPolling()
+        await deleteJSON(pendingUrl(appId), token, appId)
+        setGen({ phase: 'done', startedAt, params, error: '' })
+        onReadyRef.current?.(entries)
+        // Cosmetic toast auto-hide only — the story is already delivered.
+        if (toastRef.current) clearTimeout(toastRef.current)
+        toastRef.current = setTimeout(() => {
+          setGen((g) => (g.phase === 'done' ? { ...g, phase: 'idle' } : g))
+        }, 3500)
+        return
+      }
+      setGen((g) => (g.phase === 'running' && phaseFor() === 'stale' ? { ...g, phase: 'stale' } : g))
+    }, GEN_POLL_MS)
+  }, [appId, token, stopPolling])
+
+  // Resume a pending generation across mounts / reloads.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const res = await getJSON(pendingUrl(appId), token, appId)
+      if (cancelled) return
+      if (res.ok && res.data && typeof res.data === 'object' && res.data.started_at) {
+        beginPolling(res.data)
+      }
+    })()
+    return () => {
+      cancelled = true
+      stopPolling()
+      if (toastRef.current) clearTimeout(toastRef.current)
+    }
+  }, [appId, token, beginPolling, stopPolling])
+
+  const start = useCallback(async (params, currentIndex) => {
+    if (pollRef.current) return
+    const pending = {
+      started_at: new Date().toISOString(),
+      params,
+      known_ids: (currentIndex || []).map((e) => e.id),
+    }
+    // Persist BEFORE kicking the job so a navigation right after the tap
+    // can't lose the record.
+    await putJSON(pendingUrl(appId), token, pending, appId)
+    let failure = ''
+    try {
+      const r = await fetch(`/api/apps/${appId}/run-job`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!r.ok) failure = `Could not start generation (HTTP ${r.status}).`
+    } catch {
+      failure = 'Could not reach the server.'
+    }
+    if (failure) {
+      await deleteJSON(pendingUrl(appId), token, appId)
+      setGen({ phase: 'error', startedAt: 0, params, error: failure })
+      return
+    }
+    beginPolling(pending)
+  }, [appId, token, beginPolling])
+
+  const dismiss = useCallback(async () => {
+    stopPolling()
+    await deleteJSON(pendingUrl(appId), token, appId)
+    setGen({ phase: 'idle', startedAt: 0, params: null, error: '' })
+  }, [appId, token, stopPolling])
+
+  return { ...gen, start, dismiss }
 }
 
 // ---------------------------------------------------------------------------
@@ -353,7 +573,7 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 /* chrome elements (labels, marks, headers) are not */
 .tn-root h1, .tn-root h2, .tn-root h3,
 .tn-brand, .tn-mark, .tn-card-badge,
-.tn-tab, .tn-level-pill, .tn-feedback-row {
+.tn-level-pill, .tn-rate-row {
   user-select: none; -webkit-user-select: none;
 }
 /* buttons / interactive: manipulation for fast tap, contain for scroll bounce */
@@ -364,22 +584,6 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 /* end NativeTouch */
 
 /* ---------- App-specific styles ---------- */
-
-/* Tab bar */
-.tn-tabs {
-  display: flex; gap: 2px; padding: 3px;
-  background: var(--surface2, var(--surface));
-  border: 1px solid var(--border); border-radius: 10px;
-}
-.tn-tab {
-  min-height: 44px; padding: 6px 14px; border: none; border-radius: 7px;
-  background: transparent; color: var(--muted);
-  font-family: var(--font); font-size: 13px; font-weight: 650; cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-  touch-action: manipulation; user-select: none;
-}
-.tn-tab:hover { color: var(--text); }
-.tn-tab.is-active { background: var(--bg); color: var(--text); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18); }
 
 /* Story list */
 .tn-list-wrap { padding: 14px 16px 32px; display: flex; flex-direction: column; gap: 8px; }
@@ -400,6 +604,41 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .tn-generate-btn:disabled { background: var(--surface); border-color: var(--border); color: var(--muted); cursor: default; pointer-events: none; }
 .tn-status-hint { font-size: 12px; color: var(--muted); }
 .tn-error-hint { font-size: 12px; color: var(--danger); }
+.tn-stale-actions { display: inline-flex; gap: 6px; }
+.tn-stale-btn {
+  min-height: 32px; padding: 4px 10px; border-radius: 8px;
+  border: 1px solid var(--border); background: transparent;
+  color: var(--accent); font-family: var(--font); font-size: 12px; font-weight: 650;
+  cursor: pointer; touch-action: manipulation; user-select: none;
+}
+@media (hover: hover) { .tn-stale-btn:hover { border-color: var(--accent); } }
+
+/* Library card: the card itself is a row container; the open affordance and
+   the delete affordance are sibling buttons (no nested-button markup). */
+.tn-card-open {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 14px;
+  padding: 0; margin: 0; border: none; background: transparent;
+  color: inherit; font-family: inherit; text-align: left; cursor: pointer;
+  touch-action: manipulation;
+}
+.tn-card-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+@media (hover: hover) {
+  .tn-card:has(.tn-card-open:hover) { border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); }
+}
+.tn-card:has(.tn-card-open:active) { transform: scale(0.992); }
+.tn-card-del {
+  flex: 0 0 auto; width: 36px; height: 36px; margin-right: -6px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; border-radius: 8px; background: transparent;
+  color: var(--muted); cursor: pointer;
+  touch-action: manipulation; user-select: none;
+  transition: color 0.14s ease, background 0.14s ease;
+}
+@media (hover: hover) {
+  .tn-card-del:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
+}
+.tn-card-del:active { transform: scale(0.92); }
+.tn-card-del:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .tn-offline-banner {
   margin: 0 0 12px; padding: 8px 12px; border-radius: 8px;
   background: var(--accent-dim, color-mix(in srgb, var(--accent) 12%, transparent));
@@ -479,18 +718,32 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .tn-pane-top { border-bottom: 1px solid var(--border); }
 .tn-pane-bottom {}
 
-/* Draggable divider */
+/* Draggable divider: a SLIM 10px visual bar; the ::before overlay extends
+   the pointer hit area to ~26px without adding visual weight. z-index keeps
+   the overlay above the adjacent panes so the extra hit area actually
+   receives the pointer. (Same recipe as app-latex / app-webstudio.) */
 .tn-divider-handle {
-  flex: 0 0 auto; height: 20px;
+  flex: 0 0 10px; height: 10px;
+  box-sizing: border-box;
+  position: relative; z-index: 5;
   display: flex; align-items: center; justify-content: center;
   cursor: row-resize; background: var(--surface);
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
   user-select: none; -webkit-user-select: none; touch-action: none;
 }
+.tn-divider-handle::before {
+  content: ''; position: absolute;
+  left: 0; right: 0; top: -8px; bottom: -8px;
+}
+.tn-divider-handle:hover,
+.tn-divider-handle:focus-visible {
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+}
 .tn-divider-pip {
-  width: 32px; height: 4px; border-radius: 2px;
-  background: var(--border);
+  width: 44px; height: 4px; border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 65%, transparent);
+  pointer-events: none;
 }
 
 /* Story head inside each pane */
@@ -518,11 +771,6 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
   color: var(--text);
 }
 
-/* Highlighted paragraph (word tap) */
-.tn-para.is-highlighted {
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
-}
-
 /* Word tap target — wraps each "word" in the paragraph text */
 .tn-word {
   cursor: pointer; border-radius: 3px;
@@ -539,46 +787,38 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
   background: color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
-/* Feedback row after last paragraph */
-.tn-feedback-row {
-  padding: 16px 18px 20px;
-  border-top: 1px solid var(--border);
-  display: flex; flex-direction: column; gap: 10px;
+/* Inline tap highlight: the tapped word (and its glossary translation in the
+   other pane) gets the strong accent; the surrounding sentence — in BOTH
+   panes, aligned sentence-by-index — gets the soft accent. */
+.tn-ctx { background: color-mix(in srgb, var(--accent) 11%, transparent); }
+.tn-word.is-hit {
+  background: color-mix(in srgb, var(--accent) 34%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 34%, transparent);
 }
-.tn-feedback-label { font-size: 13px; font-weight: 700; color: var(--text); }
-.tn-feedback-btns { display: flex; gap: 8px; flex-wrap: wrap; }
-.tn-feedback-btn {
-  min-height: 38px; padding: 6px 14px; border-radius: 8px;
-  border: 1px solid var(--border); background: var(--surface);
-  color: var(--muted); font-size: 13px; font-weight: 600;
+
+/* Difficulty rating — a compact one-line chip row after the final paragraph.
+   Deliberately quiet: no card chrome, appears exactly when reading ends. */
+.tn-rate-row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 18px 18px 28px;
+  font-size: 13px; color: var(--muted);
+}
+.tn-rate-label { font-weight: 600; }
+.tn-rate-chip {
+  min-height: 36px; padding: 5px 13px; border-radius: 18px;
+  border: 1px solid var(--border); background: transparent;
+  color: var(--muted); font-size: 12.5px; font-weight: 600;
   cursor: pointer; font-family: var(--font);
   touch-action: manipulation; user-select: none;
   transition: border-color 0.14s, color 0.14s, background 0.14s;
 }
-@media (hover: hover) { .tn-feedback-btn:hover { border-color: var(--accent); color: var(--text); } }
-.tn-feedback-btn:active { transform: scale(0.97); }
-.tn-feedback-btn.is-selected {
+@media (hover: hover) { .tn-rate-chip:hover { border-color: var(--accent); color: var(--text); } }
+.tn-rate-chip:active { transform: scale(0.96); }
+.tn-rate-chip.is-selected {
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   border-color: var(--accent); color: var(--accent);
 }
-.tn-feedback-confirm { font-size: 12px; color: var(--muted); line-height: 1.5; }
-
-/* Glossary sheet content */
-.tn-gloss-word-a { font-size: 18px; font-weight: 800; letter-spacing: -0.01em; margin: 0 0 2px; }
-.tn-gloss-word-b { font-size: 14px; color: var(--accent); font-weight: 600; margin: 0 0 10px; }
-.tn-gloss-note { font-size: 13px; color: var(--muted); line-height: 1.55; margin: 0 0 4px; }
-.tn-gloss-context-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin: 12px 0 6px; }
-.tn-gloss-context-a {
-  font-size: 14px; line-height: 1.6; color: var(--text); padding: 10px 12px;
-  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
-  border-radius: 8px; border-left: 3px solid var(--accent);
-  margin-bottom: 8px;
-}
-.tn-gloss-context-b {
-  font-size: 13px; line-height: 1.6; color: var(--muted); padding: 10px 12px;
-  background: var(--surface); border-radius: 8px;
-}
-.tn-gloss-highlight { font-weight: 750; color: var(--accent); }
+.tn-rate-note { font-size: 12px; }
 
 /* First-run / setup state */
 .tn-setup-wrap { padding: 24px 18px 32px; display: flex; flex-direction: column; gap: 16px; max-width: 480px; margin: 0 auto; }
@@ -586,13 +826,10 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .tn-setup-note { font-size: 12px; color: var(--muted); line-height: 1.5; margin: 0 0 8px; }
 .tn-setup-row { margin-bottom: 16px; }
 
-/* Settings */
-.tn-settings-wrap { padding: 18px 16px 32px; display: flex; flex-direction: column; gap: 20px; max-width: 480px; }
-.tn-section-label { font-size: 14px; font-weight: 700; color: var(--text); margin: 0 0 6px; display: block; }
-.tn-section-note { font-size: 12px; color: var(--muted); line-height: 1.5; margin: 0 0 8px; }
-.tn-save-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
-.tn-toast { font-size: 12px; color: var(--green, #4caf50); }
+/* Toasts + destructive button */
 .tn-error-toast { font-size: 12px; color: var(--danger); }
+.tn-btn-danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+@media (hover: hover) { .tn-btn-danger:hover { filter: brightness(1.08); } }
 
 /* Spinners + loading */
 @keyframes tn-spin { to { transform: rotate(360deg); } }
@@ -631,103 +868,62 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 `
 
 // ---------------------------------------------------------------------------
-// Utility: split paragraph text into tappable word spans.
+// ParaText — one paragraph rendered as tappable word spans with the inline
+// tap highlight. No bottom sheet: the tapped word gets the strong accent,
+// its sentence the soft accent, and the OTHER pane shows the aligned
+// sentence (index-clamped) plus — when the glossary maps the word — the
+// exact translated word, also strong.
+//
+// `highlight` is the reader-level state:
+//   { paraIdx, lang, wordIdx, sentIdx, otherWord }
+// This component renders both roles: when its (paraIdx, paneLang) matches
+// the tapped side it shows the tapped word; when it's the same paragraph in
+// the other pane it shows the aligned context.
+//
 // Language learners need to be able to SELECT text (copy/paste), so
-// user-select is set to text on .tn-para-text, not suppressed.
+// user-select stays `text` on .tn-para-text.
 // ---------------------------------------------------------------------------
-function WordSpan({ text, onTap }) {
-  // Split on whitespace but keep the whitespace tokens so re-joining is correct.
-  const tokens = text.split(/(\s+)/)
+function ParaText({ text, paraIdx, paneLang, highlight, onWordTap }) {
+  const tokens = useMemo(() => tokenizeParagraph(text), [text])
+  const inPara = highlight && highlight.paraIdx === paraIdx
+  const isTappedPane = inPara && highlight.lang === paneLang
+
+  let ctxSentIdx = -1
+  let strongStart = -1
+  let strongEnd = -1
+  if (isTappedPane) {
+    ctxSentIdx = highlight.sentIdx
+    strongStart = strongEnd = highlight.wordIdx
+  } else if (inPara) {
+    ctxSentIdx = alignSentenceIndex(highlight.sentIdx, sentenceCount(tokens))
+    if (highlight.otherWord) {
+      const range = findPhraseTokenRange(tokens, highlight.otherWord)
+      if (range) { strongStart = range.start; strongEnd = range.end }
+    }
+  }
+
   return (
-    <>
+    <p className="tn-para-text">
       {tokens.map((tok, i) => {
-        if (/^\s+$/.test(tok)) return tok
+        const inCtx = ctxSentIdx >= 0 && tok.sentIdx === ctxSentIdx
+        if (!tok.isWord) {
+          return inCtx ? <span key={i} className="tn-ctx">{tok.text}</span> : tok.text
+        }
+        const isHit = strongStart >= 0 && tok.wordIdx >= strongStart && tok.wordIdx <= strongEnd
         return (
           <span
             key={i}
-            className="tn-word"
+            className={`tn-word${inCtx ? ' tn-ctx' : ''}${isHit ? ' is-hit' : ''}`}
             role="button"
             tabIndex={0}
-            aria-label={`Look up: ${tok}`}
-            onClick={() => onTap(tok)}
-            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onTap(tok) } }}
+            onClick={() => onWordTap(paraIdx, paneLang, tok)}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onWordTap(paraIdx, paneLang, tok) } }}
           >
-            {tok}
+            {tok.text}
           </span>
         )
       })}
-    </>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Highlight a word within a paragraph text string.
-// Returns an array of React elements.
-// ---------------------------------------------------------------------------
-function highlightWord(text, word) {
-  if (!word || typeof text !== 'string') return [text]
-  const re = new RegExp(`(${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi')
-  const parts = text.split(re)
-  return parts.map((part, i) =>
-    re.test(part)
-      ? <span key={i} className="tn-gloss-highlight">{part}</span>
-      : part
-  )
-}
-
-// ---------------------------------------------------------------------------
-// GlossarySheet — bottom sheet for a tapped word.
-// ---------------------------------------------------------------------------
-function GlossarySheet({ entry, para, langA, langB, tappedLang, onClose }) {
-  const wordInA = tappedLang === 'a' ? entry.word_a : entry.word_b
-  const wordInB = tappedLang === 'a' ? entry.word_b : entry.word_a
-  const leadLang = tappedLang === 'a' ? langA : langB
-  const otherLang = tappedLang === 'a' ? langB : langA
-  return (
-    <div className="tn-scrim" onClick={onClose} role="dialog" aria-modal="true" aria-label="Word meaning">
-      <div className="tn-sheet" onClick={(e) => e.stopPropagation()}>
-        <div>
-          <p className="tn-gloss-word-a">{wordInA}</p>
-          <p className="tn-gloss-word-b">{leadLang} → {otherLang}: {wordInB}</p>
-          {entry.note && <p className="tn-gloss-note">{entry.note}</p>}
-        </div>
-        <div className="tn-gloss-context-label">Context</div>
-        <div className="tn-gloss-context-a" aria-label={`${leadLang} paragraph`}>
-          {tappedLang === 'a'
-            ? highlightWord(para.a, entry.word_a)
-            : highlightWord(para.b, entry.word_b)}
-        </div>
-        <div className="tn-gloss-context-b" aria-label={`${otherLang} paragraph`}>
-          {tappedLang === 'a'
-            ? highlightWord(para.b, entry.word_b)
-            : highlightWord(para.a, entry.word_a)}
-        </div>
-        <div className="tn-sheet-actions">
-          <button className="tn-btn tn-btn-secondary" onClick={onClose}>Close</button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// Full-paragraph fallback sheet when the tapped word isn't in the glossary.
-function ParagraphSheet({ para, langA, langB, tappedLang, tappedWord, onClose }) {
-  return (
-    <div className="tn-scrim" onClick={onClose} role="dialog" aria-modal="true" aria-label="Paragraph context">
-      <div className="tn-sheet" onClick={(e) => e.stopPropagation()}>
-        <p className="tn-sheet-title">{tappedLang === 'a' ? langA : langB}</p>
-        <div className="tn-gloss-context-a">
-          {highlightWord(tappedLang === 'a' ? para.a : para.b, tappedWord)}
-        </div>
-        <div className="tn-gloss-context-label">{tappedLang === 'a' ? langB : langA}</div>
-        <div className="tn-gloss-context-b">
-          {tappedLang === 'a' ? para.b : para.a}
-        </div>
-        <div className="tn-sheet-actions">
-          <button className="tn-btn tn-btn-secondary" onClick={onClose}>Close</button>
-        </div>
-      </div>
-    </div>
+    </p>
   )
 }
 
@@ -768,10 +964,9 @@ function computeSyncScrollTop(scrollTop, srcOffsets, dstOffsets) {
   return dst.top + frac * dst.height
 }
 
-function StoryReader({ story, prefs, appId, token, onClose, onFeedback }) {
+function StoryReader({ story, onClose, onRate }) {
   const [bLead, setBLead] = useState(false)
-  const [sheet, setSheet] = useState(null)
-  const [feedbackVerdict, setFeedbackVerdict] = useState(null)
+  const [rating, setRating] = useState(story.rating || null)
   const [splitRatio, setSplitRatio] = useState(() => {
     try {
       const v = parseFloat(localStorage.getItem('tn-split-ratio'))
@@ -779,7 +974,8 @@ function StoryReader({ story, prefs, appId, token, onClose, onFeedback }) {
     } catch {}
     return 0.5
   })
-  const [highlightedPara, setHighlightedPara] = useState(null)
+  // Inline word-tap highlight: { paraIdx, lang, wordIdx, sentIdx, otherWord }
+  const [highlight, setHighlight] = useState(null)
 
   const topPaneRef = useRef(null)
   const botPaneRef = useRef(null)
@@ -859,31 +1055,41 @@ function StoryReader({ story, prefs, appId, token, onClose, onFeedback }) {
     e.currentTarget.releasePointerCapture(e.pointerId)
   }, [])
 
-  const handleWordTap = useCallback((paraIdx, word, lang) => {
-    setHighlightedPara(paraIdx)
-    const para = story.paragraphs[paraIdx]
-    const entry = lookupGlossary(para, word)
-    if (entry) {
-      setSheet({ type: 'glossary', paraIdx, word, lang, entry })
-    } else {
-      setSheet({ type: 'para', paraIdx, word, lang })
-    }
-    // Scroll the opposite pane to show the highlighted paragraph
-    setTimeout(() => {
-      const isTop = (lang === 'a' && !bLead) || (lang === 'b' && bLead)
-      const otherRef = isTop ? botParaRefs[paraIdx] : topParaRefs[paraIdx]
-      if (otherRef?.current) {
-        otherRef.current.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  const handleWordTap = useCallback((paraIdx, lang, tok) => {
+    setHighlight((prev) => {
+      // Tapping the same word again clears the highlight.
+      if (prev && prev.paraIdx === paraIdx && prev.lang === lang && prev.wordIdx === tok.wordIdx) {
+        return null
       }
-    }, 0)
-  }, [story, bLead, topParaRefs, botParaRefs])
+      const para = story.paragraphs[paraIdx]
+      const word = stripWordPunct(tok.text)
+      const entry = word ? lookupGlossary(para, word) : null
+      const otherWord = entry ? (lang === 'a' ? entry.word_b : entry.word_a) : null
+      return { paraIdx, lang, wordIdx: tok.wordIdx, sentIdx: tok.sentIdx, otherWord }
+    })
+  }, [story])
 
-  const closeSheet = useCallback(() => setSheet(null), [])
+  // Tapping anywhere that isn't a word clears the highlight.
+  const handlePaneClick = useCallback((e) => {
+    if (e.target.closest && e.target.closest('.tn-word')) return
+    setHighlight(null)
+  }, [])
 
-  const handleFeedback = useCallback(async (verdict) => {
-    setFeedbackVerdict(verdict)
-    onFeedback(story.id, verdict)
-  }, [story.id, onFeedback])
+  // After a tap, bring the aligned paragraph in the OTHER pane into view so
+  // the highlighted context is visible. Runs post-render (no timers).
+  useEffect(() => {
+    if (!highlight) return
+    const tappedIsTop = (highlight.lang === 'a' && !bLead) || (highlight.lang === 'b' && bLead)
+    const otherRef = tappedIsTop ? botParaRefs[highlight.paraIdx] : topParaRefs[highlight.paraIdx]
+    if (otherRef?.current) {
+      otherRef.current.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    }
+  }, [highlight, bLead, topParaRefs, botParaRefs])
+
+  const handleRate = useCallback((verdict) => {
+    setRating(verdict)
+    onRate(story, verdict)
+  }, [story, onRate])
 
   const langA = story.lang_a
   const langB = story.lang_b
@@ -918,6 +1124,7 @@ function StoryReader({ story, prefs, appId, token, onClose, onFeedback }) {
           ref={topPaneRef}
           style={{ height: `${splitRatio * 100}%` }}
           onScroll={handleTopScroll}
+          onClick={handlePaneClick}
         >
           <div className="tn-story-head">
             <p className="tn-story-title-a">{bLead ? story.title_b : story.title_a}</p>
@@ -927,14 +1134,15 @@ function StoryReader({ story, prefs, appId, token, onClose, onFeedback }) {
             <div
               key={i}
               ref={(el) => { topParaRefs[i].current = el }}
-              className={`tn-para${highlightedPara === i ? ' is-highlighted' : ''}`}
+              className="tn-para"
             >
-              <p className="tn-para-text">
-                <WordSpan
-                  text={bLead ? para.b : para.a}
-                  onTap={(w) => handleWordTap(i, w, bLead ? 'b' : 'a')}
-                />
-              </p>
+              <ParaText
+                text={bLead ? para.b : para.a}
+                paraIdx={i}
+                paneLang={bLead ? 'b' : 'a'}
+                highlight={highlight}
+                onWordTap={handleWordTap}
+              />
             </div>
           ))}
         </div>
@@ -959,6 +1167,7 @@ function StoryReader({ story, prefs, appId, token, onClose, onFeedback }) {
           ref={botPaneRef}
           style={{ height: `${(1 - splitRatio) * 100}%` }}
           onScroll={handleBotScroll}
+          onClick={handlePaneClick}
         >
           <div className="tn-story-head">
             <p className="tn-story-title-a">{bLead ? story.title_a : story.title_b}</p>
@@ -968,65 +1177,39 @@ function StoryReader({ story, prefs, appId, token, onClose, onFeedback }) {
             <div
               key={i}
               ref={(el) => { botParaRefs[i].current = el }}
-              className={`tn-para${highlightedPara === i ? ' is-highlighted' : ''}`}
+              className="tn-para"
             >
-              <p className="tn-para-text">
-                <WordSpan
-                  text={bLead ? para.a : para.b}
-                  onTap={(w) => handleWordTap(i, w, bLead ? 'a' : 'b')}
-                />
-              </p>
+              <ParaText
+                text={bLead ? para.a : para.b}
+                paraIdx={i}
+                paneLang={bLead ? 'a' : 'b'}
+                highlight={highlight}
+                onWordTap={handleWordTap}
+              />
             </div>
           ))}
-          {/* Feedback row — in the bottom pane after the last paragraph */}
-          <div className="tn-feedback-row">
-            <div className="tn-feedback-label">How was this story for you?</div>
-            <div className="tn-feedback-btns">
-              {[
-                { verdict: 'too_simple', label: 'Too simple' },
-                { verdict: 'just_right', label: 'Just right' },
-                { verdict: 'too_complex', label: 'Too complex' },
-              ].map(({ verdict, label }) => (
-                <button
-                  key={verdict}
-                  type="button"
-                  className={`tn-feedback-btn${feedbackVerdict === verdict ? ' is-selected' : ''}`}
-                  onClick={() => handleFeedback(verdict)}
-                  aria-pressed={feedbackVerdict === verdict}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-            {feedbackVerdict && (
-              <div className="tn-feedback-confirm">
-                Saved! Future stories will adapt to your feedback.
-              </div>
-            )}
+          {/* Difficulty rating — one quiet row right after the last paragraph */}
+          <div className="tn-rate-row">
+            <span className="tn-rate-label">How was it?</span>
+            {[
+              { verdict: 'too_simple', label: 'Too easy' },
+              { verdict: 'just_right', label: 'Just right' },
+              { verdict: 'too_complex', label: 'Too hard' },
+            ].map(({ verdict, label }) => (
+              <button
+                key={verdict}
+                type="button"
+                className={`tn-rate-chip${rating === verdict ? ' is-selected' : ''}`}
+                onClick={() => handleRate(verdict)}
+                aria-pressed={rating === verdict}
+              >
+                {label}
+              </button>
+            ))}
+            {rating && <span className="tn-rate-note">Noted — the next story will adapt.</span>}
           </div>
         </div>
       </div>
-
-      {sheet && sheet.type === 'glossary' && (
-        <GlossarySheet
-          entry={sheet.entry}
-          para={story.paragraphs[sheet.paraIdx]}
-          langA={langA}
-          langB={langB}
-          tappedLang={sheet.lang}
-          onClose={closeSheet}
-        />
-      )}
-      {sheet && sheet.type === 'para' && (
-        <ParagraphSheet
-          para={story.paragraphs[sheet.paraIdx]}
-          langA={langA}
-          langB={langB}
-          tappedLang={sheet.lang}
-          tappedWord={sheet.word}
-          onClose={closeSheet}
-        />
-      )}
     </div>
   )
 }
@@ -1034,11 +1217,12 @@ function StoryReader({ story, prefs, appId, token, onClose, onFeedback }) {
 // ---------------------------------------------------------------------------
 // GenerateSheet — bottom sheet for choosing story topic + mode before generating.
 // ---------------------------------------------------------------------------
-function GenerateSheet({ onGenerate, onCancel, initialLangA, initialLangB }) {
+function GenerateSheet({ onGenerate, onCancel, initialLangA, initialLangB, initialLevel }) {
   const [topicInput, setTopicInput] = useState('')
   const [selectedMode, setSelectedMode] = useState(null)
   const [langA, setLangA] = useState(initialLangA || 'English')
   const [langB, setLangB] = useState(initialLangB || '')
+  const [level, setLevel] = useState(CEFR_LEVELS.includes(initialLevel) ? initialLevel : 'B1')
 
   const CHIPS = [
     { label: 'Surprise me', mode: 'free' },
@@ -1057,6 +1241,7 @@ function GenerateSheet({ onGenerate, onCancel, initialLangA, initialLangB }) {
       mode: selectedMode || 'free',
       lang_a: langA.trim() || (initialLangA || 'English'),
       lang_b: langB.trim() || (initialLangB || ''),
+      level,
     })
   }
 
@@ -1085,6 +1270,22 @@ function GenerateSheet({ onGenerate, onCancel, initialLangA, initialLangB }) {
             placeholder="e.g. Spanish, French, Japanese"
             autoComplete="off"
           />
+        </div>
+        <div>
+          <label className="tn-setup-label" htmlFor="tn-gen-level">Level (CEFR)</label>
+          <select
+            id="tn-gen-level"
+            className="tn-select"
+            value={level}
+            onChange={(e) => setLevel(e.target.value)}
+          >
+            <option value="A1">A1 — Beginner</option>
+            <option value="A2">A2 — Elementary</option>
+            <option value="B1">B1 — Intermediate</option>
+            <option value="B2">B2 — Upper intermediate</option>
+            <option value="C1">C1 — Advanced</option>
+            <option value="C2">C2 — Mastery</option>
+          </select>
         </div>
         <div>
           <label className="tn-setup-label" htmlFor="tn-gen-topic">Topic (optional)</label>
@@ -1122,33 +1323,67 @@ function GenerateSheet({ onGenerate, onCancel, initialLangA, initialLangB }) {
 }
 
 // ---------------------------------------------------------------------------
-// LibraryTab — story list + generate button.
+// DeleteConfirmModal — browser modal dialogs (window.confirm) silently no-op
+// inside the AppCanvas iframe (sandbox lacks `allow-modals`), so we ship our
+// own confirmation.
 // ---------------------------------------------------------------------------
-function LibraryTab({ appId, token, online, prefs, onPrefsChange }) {
-  const [index, setIndex] = useState(null) // null = loading, [] = empty
+function DeleteConfirmModal({ entry, busy, onConfirm, onCancel }) {
+  return (
+    <div className="tn-scrim" onClick={busy ? undefined : onCancel}
+      role="dialog" aria-modal="true" aria-label="Confirm delete">
+      <div className="tn-sheet" onClick={(e) => e.stopPropagation()}>
+        <p className="tn-sheet-title">Delete “{entry.title_a}”?</p>
+        <p className="tn-sheet-sub">
+          This removes the story permanently. It cannot be undone.
+        </p>
+        <div className="tn-sheet-actions">
+          <button type="button" className="tn-btn tn-btn-secondary"
+            onClick={onCancel} disabled={busy}>Cancel</button>
+          <button type="button" className="tn-btn tn-btn-danger"
+            onClick={onConfirm} disabled={busy}>
+            {busy ? 'Deleting…' : 'Delete'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const TrashIcon = (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M3 6h18" />
+    <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
+    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+    <path d="M10 11v6" />
+    <path d="M14 11v6" />
+  </svg>
+)
+
+// ---------------------------------------------------------------------------
+// LibraryTab — story list + generate button. The story index and the
+// generation engine live in App (they must outlive any view), so they arrive
+// as props.
+// ---------------------------------------------------------------------------
+function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, onIndexChange, gen }) {
   const [stories, setStories] = useState({})
   const [activeStory, setActiveStory] = useState(null)
-  const [generating, setGenerating] = useState(false)
-  const [statusMsg, setStatusMsg] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
   const [showGenerateSheet, setShowGenerateSheet] = useState(false)
-  const generatingRef = useRef(false)
-  const pollRef = useRef(null)
+  const [pendingDelete, setPendingDelete] = useState(null)
+  const [deleting, setDeleting] = useState(false)
   const navRef = useRef(null)
-
-  // Load story index on mount.
-  useEffect(() => {
-    let cancelled = false
-    ;(async () => {
-      const entries = await loadStoryIndex(appId, token)
-      if (!cancelled) setIndex(entries)
-    })()
-    return () => { cancelled = true }
-  }, [appId, token])
+  const errTimerRef = useRef(null)
 
   useEffect(() => () => {
-    if (pollRef.current) clearInterval(pollRef.current)
+    if (errTimerRef.current) clearTimeout(errTimerRef.current)
     try { navRef.current?.close?.() } catch {}
+  }, [])
+
+  const flashError = useCallback((msg) => {
+    setErrorMsg(msg)
+    if (errTimerRef.current) clearTimeout(errTimerRef.current)
+    errTimerRef.current = setTimeout(() => setErrorMsg(''), 3000)
   }, [])
 
   const openStory = useCallback(async (entry) => {
@@ -1169,13 +1404,12 @@ function LibraryTab({ appId, token, online, prefs, onPrefsChange }) {
         setStories((prev) => ({ ...prev, [story.id]: story }))
         setActiveStory(story)
       } else {
-        setErrorMsg('Could not load story.')
-        setTimeout(() => setErrorMsg(''), 3000)
+        flashError('Could not load story.')
       }
     } else {
       setActiveStory(stories[entry.id])
     }
-  }, [appId, token, stories])
+  }, [appId, token, stories, flashError])
 
   const closeStory = useCallback(() => {
     try { navRef.current?.close?.() } catch {}
@@ -1183,87 +1417,90 @@ function LibraryTab({ appId, token, online, prefs, onPrefsChange }) {
     setActiveStory(null)
   }, [])
 
-  const handleFeedback = useCallback(async (storyId, verdict) => {
-    const entry = { story_id: storyId, verdict, ts: new Date().toISOString() }
-    const next = {
-      ...prefs,
-      feedback_history: [...(prefs.feedback_history || []), entry],
-    }
+  // A rating lands in two places: on the story record itself (so reopening
+  // the story shows it) and in prefs.feedback_history (generate.sh steers
+  // the next story's difficulty from the recent entries).
+  const handleRate = useCallback(async (story, verdict) => {
+    const updated = { ...story, rating: verdict }
+    setStories((prev) => ({ ...prev, [story.id]: updated }))
+    await putJSON(`/api/storage/apps/${appId}/stories/${story.id}.json`, token, updated, appId)
+    const history = [...(prefs.feedback_history || [])]
+    // Re-rating the same story replaces its last entry instead of stacking.
+    if (history.length && history[history.length - 1]?.story_id === story.id) history.pop()
+    history.push({ story_id: story.id, verdict, ts: new Date().toISOString() })
+    const next = { ...prefs, feedback_history: history }
     onPrefsChange(next)
     await savePrefs(appId, token, next)
   }, [appId, token, prefs, onPrefsChange])
 
-  const handleGenerate = useCallback(async () => {
-    if (generatingRef.current) return
-    generatingRef.current = true
-    setGenerating(true)
-    setErrorMsg('')
-    setStatusMsg('Generating story…')
-    const knownIds = new Set((index || []).map((e) => e.id))
-    let started
-    try {
-      const r = await fetch(`/api/apps/${appId}/run-job`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!r.ok) {
-        setStatusMsg('')
-        setErrorMsg(`Could not start generation (HTTP ${r.status}).`)
-        setGenerating(false)
-        generatingRef.current = false
-        return
-      }
-      started = Date.now()
-    } catch {
-      setStatusMsg('')
-      setErrorMsg('Could not reach the server.')
-      setGenerating(false)
-      generatingRef.current = false
-      return
-    }
-    // Poll every 4s; give up after 5 minutes.
-    if (pollRef.current) clearInterval(pollRef.current)
-    pollRef.current = setInterval(async () => {
-      const elapsed = Date.now() - started
-      const entries = await loadStoryIndex(appId, token)
-      const newEntry = entries.find((e) => !knownIds.has(e.id))
-      if (newEntry) {
-        clearInterval(pollRef.current)
-        pollRef.current = null
-        setIndex(entries)
-        setGenerating(false)
-        generatingRef.current = false
-        setStatusMsg('Story ready!')
-        setTimeout(() => setStatusMsg(''), 3500)
-        return
-      }
-      if (elapsed > 300_000) {
-        clearInterval(pollRef.current)
-        pollRef.current = null
-        setGenerating(false)
-        generatingRef.current = false
-        setStatusMsg('')
-        setErrorMsg('Generation is taking longer than expected. Check back soon.')
-      }
-    }, 4000)
-  }, [appId, token, index])
-
-  const handleSheetGenerate = useCallback(async ({ topic, mode, lang_a, lang_b }) => {
+  const handleSheetGenerate = useCallback(async ({ topic, mode, lang_a, lang_b, level }) => {
     setShowGenerateSheet(false)
-    // Persist lang choice back to prefs so next sheet opens with same defaults.
-    // Also save next_request (topic, mode, langs) so generate.sh can use them.
+    // Persist choices back to prefs so the next sheet opens with the same
+    // defaults, and save next_request so generate.sh picks them up.
     const updatedLangA = lang_a || prefs.lang_a
     const updatedLangB = lang_b || prefs.lang_b
+    const updatedLevel = CEFR_LEVELS.includes(level) ? level : (prefs.level || 'B1')
     const next = {
       ...prefs,
       lang_a: updatedLangA,
       lang_b: updatedLangB,
+      level: updatedLevel,
       next_request: { topic, mode, lang_a: updatedLangA, lang_b: updatedLangB },
     }
     onPrefsChange(next)
     await savePrefs(appId, token, next)
-    handleGenerate()
-  }, [appId, token, prefs, onPrefsChange, handleGenerate])
+    gen.start(
+      { topic, mode, lang_a: updatedLangA, lang_b: updatedLangB, level: updatedLevel },
+      index || [],
+    )
+  }, [appId, token, prefs, onPrefsChange, gen, index])
+
+  const confirmDelete = useCallback(async () => {
+    const entry = pendingDelete
+    if (!entry) return
+    setDeleting(true)
+    const res = await deleteJSON(
+      `/api/storage/apps/${appId}/stories/${entry.id}.json`, token, appId,
+    )
+    if (!res.ok) {
+      setDeleting(false)
+      setPendingDelete(null)
+      flashError('Could not delete story.')
+      return
+    }
+    const nextIndex = removeStoryFromIndex(index || [], entry.id)
+    await putJSON(`/api/storage/apps/${appId}/stories/index.json`, token, nextIndex, appId)
+    onIndexChange(nextIndex)
+    setStories((prev) => {
+      if (!(entry.id in prev)) return prev
+      const next = { ...prev }
+      delete next[entry.id]
+      return next
+    })
+    setDeleting(false)
+    setPendingDelete(null)
+  }, [appId, token, pendingDelete, index, onIndexChange, flashError])
+
+  const handleRetry = useCallback(async () => {
+    const params = gen.params || {}
+    await gen.dismiss()
+    // Restore next_request — generate.sh clears it after each run, so a
+    // retry without this would fall back to the prefs defaults.
+    if (params.lang_a && params.lang_b) {
+      const next = {
+        ...prefs,
+        next_request: {
+          topic: params.topic || '',
+          mode: params.mode || 'free',
+          lang_a: params.lang_a,
+          lang_b: params.lang_b,
+        },
+      }
+      onPrefsChange(next)
+      await savePrefs(appId, token, next)
+    }
+    gen.start(params, index || [])
+  }, [gen, prefs, onPrefsChange, appId, token, index])
 
   // Show first-run setup if no prefs are set.
   const needsSetup = !prefs.lang_a || !prefs.lang_b
@@ -1280,7 +1517,8 @@ function LibraryTab({ appId, token, online, prefs, onPrefsChange }) {
     )
   }
 
-  const generateDisabled = generating || !online
+  const genBusy = gen.phase === 'running' || gen.phase === 'stale'
+  const generateDisabled = genBusy || !online
 
   return (
     <div className="tn-list-wrap">
@@ -1296,11 +1534,22 @@ function LibraryTab({ appId, token, online, prefs, onPrefsChange }) {
           onClick={() => setShowGenerateSheet(true)}
           disabled={generateDisabled}
           title={!online ? 'Online required to generate' : undefined}
-          aria-busy={generating}
+          aria-busy={genBusy}
         >
-          {generating ? 'Generating…' : '+ Generate story'}
+          {genBusy ? 'Generating…' : '+ Generate story'}
         </button>
-        {statusMsg && <span className="tn-status-hint">{statusMsg}</span>}
+        {gen.phase === 'running' && <span className="tn-status-hint">Generating story…</span>}
+        {gen.phase === 'done' && <span className="tn-status-hint">Story ready!</span>}
+        {gen.phase === 'stale' && (
+          <>
+            <span className="tn-status-hint">Taking longer than expected.</span>
+            <span className="tn-stale-actions">
+              <button type="button" className="tn-stale-btn" onClick={handleRetry}>Retry</button>
+              <button type="button" className="tn-stale-btn" onClick={gen.dismiss}>Dismiss</button>
+            </span>
+          </>
+        )}
+        {gen.phase === 'error' && <span className="tn-error-hint">{gen.error}</span>}
         {errorMsg && <span className="tn-error-hint">{errorMsg}</span>}
       </div>
 
@@ -1321,18 +1570,27 @@ function LibraryTab({ appId, token, online, prefs, onPrefsChange }) {
         </div>
       ) : (
         index.map((entry) => (
-          <button
-            key={entry.id}
-            type="button"
-            className="tn-card"
-            onClick={() => openStory(entry)}
-          >
-            <div className="tn-card-main">
-              <div className="tn-card-title">{entry.title_a}</div>
-              <div className="tn-card-sub">{entry.title_b} · {entry.lang_a} / {entry.lang_b}</div>
-            </div>
-            <span className="tn-level-pill">{entry.level}</span>
-          </button>
+          <div key={entry.id} className="tn-card">
+            <button
+              type="button"
+              className="tn-card-open"
+              onClick={() => openStory(entry)}
+            >
+              <div className="tn-card-main">
+                <div className="tn-card-title">{entry.title_a}</div>
+                <div className="tn-card-sub">{entry.title_b} · {entry.lang_a} / {entry.lang_b}</div>
+              </div>
+              <span className="tn-level-pill">{entry.level}</span>
+            </button>
+            <button
+              type="button"
+              className="tn-card-del"
+              aria-label={`Delete ${entry.title_a}`}
+              onClick={() => setPendingDelete(entry)}
+            >
+              {TrashIcon}
+            </button>
+          </div>
         ))
       )}
 
@@ -1342,17 +1600,24 @@ function LibraryTab({ appId, token, online, prefs, onPrefsChange }) {
           onCancel={() => setShowGenerateSheet(false)}
           initialLangA={prefs.lang_a}
           initialLangB={prefs.lang_b}
+          initialLevel={prefs.level}
+        />
+      )}
+
+      {pendingDelete && (
+        <DeleteConfirmModal
+          entry={pendingDelete}
+          busy={deleting}
+          onConfirm={confirmDelete}
+          onCancel={() => setPendingDelete(null)}
         />
       )}
 
       {activeStory && (
         <StoryReader
-          story={activeStory}
-          prefs={prefs}
-          appId={appId}
-          token={token}
+          story={stories[activeStory.id] || activeStory}
           onClose={closeStory}
-          onFeedback={handleFeedback}
+          onRate={handleRate}
         />
       )}
     </div>
@@ -1456,136 +1721,28 @@ function SetupView({ appId, token, prefs, onPrefsChange }) {
 }
 
 // ---------------------------------------------------------------------------
-// SettingsTab — language pair, level, and feedback history summary.
-// ---------------------------------------------------------------------------
-function SettingsTab({ appId, token, prefs, onPrefsChange }) {
-  const [langA, setLangA] = useState(prefs.lang_a || 'English')
-  const [langB, setLangB] = useState(prefs.lang_b || '')
-  const [level, setLevel] = useState(prefs.level || 'B1')
-  const [saving, setSaving] = useState(false)
-  const [toast, setToast] = useState('')
-  const [errorToast, setErrorToast] = useState('')
-
-  // Sync local state if prefs prop changes externally.
-  useEffect(() => {
-    setLangA(prefs.lang_a || 'English')
-    setLangB(prefs.lang_b || '')
-    setLevel(prefs.level || 'B1')
-  }, [prefs.lang_a, prefs.lang_b, prefs.level])
-
-  const handleSave = useCallback(async () => {
-    const a = langA.trim()
-    const b = langB.trim()
-    if (!a || !b) { setErrorToast('Both languages are required.'); return }
-    setSaving(true)
-    setToast(''); setErrorToast('')
-    const next = { ...prefs, lang_a: a, lang_b: b, level }
-    const res = await savePrefs(appId, token, next)
-    setSaving(false)
-    if (res && (res.synced || res.queued)) {
-      onPrefsChange(next)
-      setToast(res.queued ? 'Saved offline — will sync' : 'Saved ✓')
-      setTimeout(() => setToast(''), 2500)
-    } else {
-      setErrorToast('Could not save. Try again.')
-    }
-  }, [appId, token, prefs, langA, langB, level, onPrefsChange])
-
-  const clearFeedback = useCallback(async () => {
-    const next = { ...prefs, feedback_history: [] }
-    const res = await savePrefs(appId, token, next)
-    if (res && (res.synced || res.queued)) {
-      onPrefsChange(next)
-      setToast('Feedback history cleared.')
-      setTimeout(() => setToast(''), 2500)
-    }
-  }, [appId, token, prefs, onPrefsChange])
-
-  const history = prefs.feedback_history || []
-  const adaptedLevel = adaptLevel(level, history)
-
-  return (
-    <div className="tn-settings-wrap">
-      <div>
-        <label className="tn-section-label" htmlFor="tn-s-lang-a">Language you know</label>
-        <input
-          id="tn-s-lang-a"
-          className="tn-input"
-          value={langA}
-          onChange={(e) => setLangA(e.target.value)}
-          placeholder="e.g. English"
-          autoComplete="off"
-        />
-      </div>
-      <div>
-        <label className="tn-section-label" htmlFor="tn-s-lang-b">Language you're learning</label>
-        <input
-          id="tn-s-lang-b"
-          className="tn-input"
-          value={langB}
-          onChange={(e) => setLangB(e.target.value)}
-          placeholder="e.g. Spanish"
-          autoComplete="off"
-        />
-      </div>
-      <div>
-        <label className="tn-section-label" htmlFor="tn-s-level">Starting level</label>
-        <p className="tn-section-note">
-          Current adapted level based on your feedback:{' '}
-          <strong>{adaptedLevel}</strong>
-          {adaptedLevel !== level ? ` (base: ${level})` : ''}.
-        </p>
-        <select
-          id="tn-s-level"
-          className="tn-select"
-          value={level}
-          onChange={(e) => setLevel(e.target.value)}
-        >
-          {CEFR_LEVELS.map((l) => (
-            <option key={l} value={l}>{l}</option>
-          ))}
-        </select>
-      </div>
-
-      <div className="tn-save-row">
-        <button type="button" className="tn-btn tn-btn-primary" onClick={handleSave} disabled={saving}>
-          {saving ? 'Saving…' : 'Save settings'}
-        </button>
-        {toast && <span className="tn-toast">{toast}</span>}
-        {errorToast && <span className="tn-error-toast">{errorToast}</span>}
-      </div>
-
-      <div>
-        <label className="tn-section-label">Feedback history</label>
-        <p className="tn-section-note">
-          {history.length === 0
-            ? 'No feedback yet. Rate stories to help Tandem adapt.'
-            : `${history.length} feedback entry${history.length > 1 ? 's' : ''}. Next story will be at level ${adaptedLevel}.`}
-        </p>
-        {history.length > 0 && (
-          <button type="button" className="tn-btn tn-btn-secondary" onClick={clearFeedback}>
-            Clear feedback history
-          </button>
-        )}
-      </div>
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Root component.
+// Root component. There is no settings screen — languages and level are
+// chosen per-generation in the generate sheet (and remembered in prefs), so
+// the library IS the app. The story index and the generation engine live
+// here because they must survive any view change.
 // ---------------------------------------------------------------------------
 export default function App({ appId, token }) {
-  const [tab, setTab] = useState('library')
   const [prefs, setPrefs] = useState(null) // null while loading
+  const [index, setIndex] = useState(null) // null = loading, [] = empty
   const online = useOnline()
+  const gen = useGeneration({ appId, token, onStoryReady: setIndex })
 
-  // Load prefs on mount.
+  // Load prefs + story index on mount.
   useEffect(() => {
     let cancelled = false
     ;(async () => {
-      const loaded = await loadPrefs(appId, token)
-      if (!cancelled) setPrefs(loaded)
+      const [loadedPrefs, entries] = await Promise.all([
+        loadPrefs(appId, token),
+        loadStoryIndex(appId, token),
+      ])
+      if (cancelled) return
+      setPrefs(loadedPrefs)
+      setIndex(entries)
     })()
     return () => { cancelled = true }
   }, [appId, token])
@@ -1614,46 +1771,19 @@ export default function App({ appId, token }) {
             )}
           </div>
         </div>
-        <div className="tn-header-right">
-          <div className="tn-tabs" role="tablist" aria-label="View">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={tab === 'library'}
-              className={`tn-tab${tab === 'library' ? ' is-active' : ''}`}
-              onClick={() => setTab('library')}
-            >
-              Library
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={tab === 'settings'}
-              className={`tn-tab${tab === 'settings' ? ' is-active' : ''}`}
-              onClick={() => setTab('settings')}
-            >
-              Settings
-            </button>
-          </div>
-        </div>
       </header>
 
       <div className="tn-scroll">
-        {tab === 'library'
-          ? <LibraryTab
-              appId={appId}
-              token={token}
-              online={online}
-              prefs={prefs}
-              onPrefsChange={setPrefs}
-            />
-          : <SettingsTab
-              appId={appId}
-              token={token}
-              prefs={prefs}
-              onPrefsChange={setPrefs}
-            />
-        }
+        <LibraryTab
+          appId={appId}
+          token={token}
+          online={online}
+          prefs={prefs}
+          onPrefsChange={setPrefs}
+          index={index}
+          onIndexChange={setIndex}
+          gen={gen}
+        />
       </div>
     </div>
   )

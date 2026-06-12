@@ -8,7 +8,8 @@ See the "Generation parameters" section at the end of this prompt for the story 
 
 1. Choose a story topic according to the mode and topic parameters (see below). Pick something concrete, culturally interesting, or evocative. Avoid generic "a person goes to the market" plots; pick stories with mild tension and a satisfying resolution.
 2. Write the story in BOTH languages in parallel. Every paragraph in Language A has a direct counterpart in Language B. The translations are natural and idiomatic in each language, NOT literal word-for-word. Both versions should read as native prose.
-3. Spread 15–25 glossary entries across ALL paragraphs of the story. Aim for 2–4 entries per paragraph on average. For each entry, provide the word/phrase in both languages and optionally a short note (grammar note, cultural context, or disambiguation tip — max 20 words).
+3. Build a per-paragraph glossary that word-aligns the two languages: cover ALL non-trivial content words in each paragraph (nouns, verbs, adjectives, adverbs, idioms — skip articles, pronouns, and trivial function words). Aim for 4–8 entries per paragraph. `word_a` and `word_b` must appear VERBATIM in that paragraph's text (same inflection and casing as written) so the reader app can highlight the pair. Optionally add a short note (grammar note, cultural context, or disambiguation tip — max 20 words).
+4. If the Generation parameters include recent difficulty ratings from the reader, steer within the requested CEFR level: ratings leaning "too hard" → simpler sentence structures and more common vocabulary; leaning "too easy" → richer structures and rarer vocabulary.
 
 ## Story variety
 
@@ -23,12 +24,14 @@ See the "Generation parameters" section at the end of this prompt for the story 
 
 ## CEFR level guidance
 
-- **A1**: Simple present tense only. Short sentences (5–10 words). High-frequency vocabulary. 10–12 paragraph pairs, 2–3 sentences each.
-- **A2**: Simple past and present. Slightly more complex sentences. 10–12 paragraph pairs, 2–4 sentences each.
-- **B1**: Mix of tenses. Subordinate clauses. Idiomatic expressions introduced. 10–14 paragraph pairs, 2–4 sentences each.
-- **B2**: Full grammar range. Complex sentences. Register variation. 12–16 paragraph pairs, 2–4 sentences each.
-- **C1**: Nuanced vocabulary. Figurative language. Cultural allusions. 12–16 paragraph pairs, 3–4 sentences each.
-- **C2**: Near-native prose. Subtle stylistic choices. 12–16 paragraph pairs, 3–4 sentences each.
+Every story has 14–20 paragraph pairs.
+
+- **A1**: Simple present tense only. Short sentences (5–10 words). High-frequency vocabulary. 14–16 paragraph pairs, 2–3 sentences each.
+- **A2**: Simple past and present. Slightly more complex sentences. 14–16 paragraph pairs, 2–4 sentences each.
+- **B1**: Mix of tenses. Subordinate clauses. Idiomatic expressions introduced. 14–18 paragraph pairs, 2–4 sentences each.
+- **B2**: Full grammar range. Complex sentences. Register variation. 16–20 paragraph pairs, 2–4 sentences each.
+- **C1**: Nuanced vocabulary. Figurative language. Cultural allusions. 16–20 paragraph pairs, 3–4 sentences each.
+- **C2**: Near-native prose. Subtle stylistic choices. 16–20 paragraph pairs, 3–4 sentences each.
 
 ## Output format
 
@@ -63,7 +66,7 @@ Rules:
 - `id`: generate a real UUID v4.
 - `lang_a` is the user's BASE language (the one they already know).
 - `lang_b` is the TARGET language (the one they are learning).
-- Spread 15–25 glossary entries across all paragraphs (2–4 per paragraph on average). Paragraphs with fewer interesting words may have 0–1 entries; high-density paragraphs may have up to 5.
+- Glossary: cover all non-trivial content words in each paragraph (4–8 entries per paragraph; 60+ across the story). `word_a` and `word_b` must appear verbatim in the paragraph text they belong to.
 - For `classic` mode, put the source tale name in `title_b` as a parenthetical (see above).
 - Do NOT invent URLs or external references.
 - Only output the JSON object — no surrounding text.

@@ -8,10 +8,12 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import {
   CEFR_LEVELS,
+  STORY_RATINGS,
   adaptLevel,
   lookupGlossary,
   normalizeStory,
   buildIndexEntry,
+  removeStoryFromIndex,
   totalGlossaryCount,
   meetsContentBar,
 } from '../story-schema.mjs'
@@ -38,6 +40,9 @@ test('inlined schema in index.jsx stays in sync with story-schema.mjs', () => {
     "if (paragraphs.length < 1) return null",
     "return story.paragraphs.reduce((n, p) => n + (Array.isArray(p.glossary) ? p.glossary.length : 0), 0)",
     "return story.paragraphs.length >= 10 && totalGlossaryCount(story) >= 15",
+    "const STORY_RATINGS = ['too_simple', 'just_right', 'too_complex']",
+    "if (STORY_RATINGS.includes(story.rating)) normalized.rating = story.rating",
+    "return index.filter((e) => !(e && typeof e === 'object' && e.id === storyId))",
   ]
   for (const snippet of distinctive) {
     assert.ok(
@@ -228,6 +233,40 @@ test('normalizeStory defaults level to B1 for an unknown CEFR value', () => {
   assert.equal(s.level, 'B1')
 })
 
+// LENIENT READ — the hard rule. Stories written before the glossary/rating
+// fields existed must still open; a strict read validator once bricked the
+// whole library.
+test('normalizeStory accepts paragraphs with NO glossary field at all (old stories)', () => {
+  const oldParas = Array.from({ length: 8 }, () => ({
+    a: 'She walked to the harbour.',
+    b: 'Ella caminó hasta el puerto.',
+  }))
+  const s = normalizeStory({ ...GOOD_STORY, paragraphs: oldParas })
+  assert.ok(s, 'old glossary-less story must normalize')
+  assert.equal(s.paragraphs.length, 8)
+  for (const p of s.paragraphs) assert.deepEqual(p.glossary, [])
+})
+
+test('normalizeStory accepts a story with no rating field (old stories)', () => {
+  const s = normalizeStory(GOOD_STORY)
+  assert.ok(s)
+  assert.equal('rating' in s, false)
+})
+
+test('normalizeStory preserves a valid rating on the story record', () => {
+  for (const verdict of STORY_RATINGS) {
+    const s = normalizeStory({ ...GOOD_STORY, rating: verdict })
+    assert.ok(s)
+    assert.equal(s.rating, verdict)
+  }
+})
+
+test('normalizeStory drops an invalid rating value', () => {
+  const s = normalizeStory({ ...GOOD_STORY, rating: 'amazing' })
+  assert.ok(s)
+  assert.equal('rating' in s, false)
+})
+
 test('normalizeStory drops glossary entries missing word_a or word_b', () => {
   // Need 10 paragraphs; vary the first one's glossary to test filtering
   const paragraphs = Array.from({ length: 10 }, (_, idx) =>
@@ -336,6 +375,44 @@ test('meetsContentBar returns false for a valid normalized 3-paragraph story', (
   const s = normalizeStory({ ...GOOD_STORY, paragraphs: threePara })
   assert.ok(s)
   assert.equal(meetsContentBar(s), false)
+})
+
+// ---------------------------------------------------------------------------
+// removeStoryFromIndex — the index half of story deletion (the file half is
+// a storage DELETE; this keeps stories/index.json consistent).
+// ---------------------------------------------------------------------------
+const SAMPLE_INDEX = [
+  { id: 'aaa', title_a: 'One' },
+  { id: 'bbb', title_a: 'Two' },
+  { id: 'ccc', title_a: 'Three' },
+]
+
+test('removeStoryFromIndex removes exactly the matching entry', () => {
+  const next = removeStoryFromIndex(SAMPLE_INDEX, 'bbb')
+  assert.deepEqual(next.map((e) => e.id), ['aaa', 'ccc'])
+})
+
+test('removeStoryFromIndex leaves the index unchanged for an unknown id', () => {
+  const next = removeStoryFromIndex(SAMPLE_INDEX, 'zzz')
+  assert.deepEqual(next.map((e) => e.id), ['aaa', 'bbb', 'ccc'])
+})
+
+test('removeStoryFromIndex does not mutate the input array', () => {
+  const input = [...SAMPLE_INDEX]
+  removeStoryFromIndex(input, 'aaa')
+  assert.equal(input.length, 3)
+})
+
+test('removeStoryFromIndex returns [] for a non-array index', () => {
+  assert.deepEqual(removeStoryFromIndex(null, 'aaa'), [])
+  assert.deepEqual(removeStoryFromIndex(undefined, 'aaa'), [])
+  assert.deepEqual(removeStoryFromIndex({ id: 'aaa' }, 'aaa'), [])
+})
+
+test('removeStoryFromIndex tolerates malformed entries', () => {
+  const messy = [null, 'junk', { id: 'aaa' }, { noId: true }]
+  const next = removeStoryFromIndex(messy, 'aaa')
+  assert.deepEqual(next, [null, 'junk', { noId: true }])
 })
 
 // ---------------------------------------------------------------------------
