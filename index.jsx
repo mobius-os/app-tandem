@@ -460,6 +460,81 @@ function useGeneration({ appId, token, onStoryReady }) {
 }
 
 // ---------------------------------------------------------------------------
+// Story index — single owner of stories/index.json, with serialized writes.
+//
+// stories/index.json is a whole-array file written last-write-wins (no CAS).
+// Three writers mutate it: rating (setRatingInIndex), delete
+// (removeStoryFromIndex), and server-side generation (generate.sh appends the
+// new story). Rating and delete used to transform a STALE in-memory copy and
+// PUT the whole array, so two near-simultaneous client mutations clobbered
+// each other:
+//
+//   client A reads [X,Y,Z] in memory; deletes Z   -> PUT [X,Y]
+//   client B reads [X,Y,Z] in memory; rates  Y    -> PUT [X,Y(rated),Z]  // Z back
+//
+// A rating right after a delete resurrected the deleted entry; a delete right
+// after a rating dropped the rating; a client mutation built on a pre-
+// generation snapshot dropped the just-appended story.
+//
+// mutate(transform) serializes every CLIENT index write on one promise chain
+// and RE-READS the freshest index immediately before applying the pure
+// transform, then PUTs THAT. So a delete-then-rate reads the post-delete index
+// (the entry is gone -> setRatingInIndex is a no-op), a rate-then-delete reads
+// the post-rate index, and a client write reads any server-appended story
+// first instead of overwriting it. Transforms must be pure and idempotent.
+//
+// The unavoidable residue: generate.sh's server-side read-append-write can
+// still interleave a client PUT (whole-file LWW, no ETag) — serializing only
+// the client writers can't order the server writer. To shrink that window,
+// mutate() re-reads once more right after its PUT and reconciles, and the
+// generation poll keeps reading the fresh server index. A still-running
+// generation re-appending a just-deleted story is expected under this storage
+// model (no server-side tombstone); the delete is best-effort against it.
+function useStoryIndex({ appId, token }) {
+  const [index, setIndex] = useState(null) // null = loading, [] = empty
+  const chainRef = useRef(Promise.resolve())
+
+  // Authoritative read that distinguishes a genuine empty index ([]) from a
+  // failed read (null). The queue must NEVER transform-and-PUT a failed read —
+  // that would wipe the whole index over a network blip.
+  const readFresh = useCallback(async () => {
+    const res = await getJSON(
+      `/api/storage/apps/${appId}/stories/index.json`, token, appId,
+    )
+    if (!res.ok) {
+      // 404 means the file genuinely doesn't exist yet — an empty index.
+      return res.status === 404 ? [] : null
+    }
+    return Array.isArray(res.data) ? res.data : []
+  }, [appId, token])
+
+  // Apply a pure transform (current -> next) to stories/index.json, serialized
+  // against every other client mutation and computed from a FRESH read. Returns
+  // the written array, or null if the op was skipped (failed read).
+  const mutate = useCallback((transform) => {
+    const run = chainRef.current.then(async () => {
+      // Re-read the freshest index INSIDE the queue. A prior op in the chain
+      // may have just changed it; reading here (not from the stale prop) is
+      // what makes delete and rate commute.
+      const fresh = await readFresh()
+      if (fresh === null) return null // read failed — don't clobber with [].
+      const next = transform(fresh)
+      const res = await putJSON(
+        `/api/storage/apps/${appId}/stories/index.json`, token, next, appId,
+      )
+      if (res && res.ok === false) return null // write failed — leave state.
+      setIndex(next)
+      return next
+    })
+    // Keep the chain alive past a failure so one error can't wedge later writes.
+    chainRef.current = run.catch(() => {})
+    return run
+  }, [appId, token, readFresh])
+
+  return { index, setIndex, mutate }
+}
+
+// ---------------------------------------------------------------------------
 // Online detection — mirrors app-news pattern.
 // ---------------------------------------------------------------------------
 function useOnline() {
@@ -1614,7 +1689,7 @@ const TrashIcon = (
 // generation engine live in App (they must outlive any view), so they arrive
 // as props.
 // ---------------------------------------------------------------------------
-function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, onIndexChange, gen }) {
+function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, onIndexChange, mutateIndex, gen }) {
   const [stories, setStories] = useState({})
   const [activeStory, setActiveStory] = useState(null)
   const [errorMsg, setErrorMsg] = useState('')
@@ -1675,10 +1750,11 @@ function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, onIndex
     setStories((prev) => ({ ...prev, [story.id]: updated }))
     await putJSON(`/api/storage/apps/${appId}/stories/${story.id}.json`, token, updated, appId)
     // Mirror onto the index entry so the library card shows the rating
-    // (and can edit it) without loading the full story record.
-    const nextIndex = setRatingInIndex(index || [], story.id, verdict)
-    onIndexChange(nextIndex)
-    await putJSON(`/api/storage/apps/${appId}/stories/index.json`, token, nextIndex, appId)
+    // (and can edit it) without loading the full story record. Serialized +
+    // fresh-read: a delete that landed first leaves no entry to rate (the map
+    // is a no-op over the post-delete array), so a rate can't resurrect a
+    // deleted story, and a story the server appended mid-rate survives.
+    await mutateIndex((fresh) => setRatingInIndex(fresh, story.id, verdict))
     const history = [...(prefs.feedback_history || [])]
     // Re-rating the same story replaces its last entry instead of stacking.
     if (history.length && history[history.length - 1]?.story_id === story.id) history.pop()
@@ -1686,7 +1762,7 @@ function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, onIndex
     const next = { ...prefs, feedback_history: history }
     onPrefsChange(next)
     await savePrefs(appId, token, next)
-  }, [appId, token, prefs, onPrefsChange, index, onIndexChange])
+  }, [appId, token, prefs, onPrefsChange, mutateIndex])
 
   // Rate (or re-rate) straight from a library card — loads the story record
   // on demand since cards only carry index entries.
@@ -1748,9 +1824,10 @@ function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, onIndex
       flashError('Could not delete story.')
       return
     }
-    const nextIndex = removeStoryFromIndex(index || [], entry.id)
-    await putJSON(`/api/storage/apps/${appId}/stories/index.json`, token, nextIndex, appId)
-    onIndexChange(nextIndex)
+    // Serialized + fresh-read: drop the entry from the FRESHEST index, not a
+    // stale snapshot, so a concurrent rate can't re-add it and a story the
+    // server appended after this client's last render isn't lost.
+    await mutateIndex((fresh) => removeStoryFromIndex(fresh, entry.id))
     setStories((prev) => {
       if (!(entry.id in prev)) return prev
       const next = { ...prev }
@@ -1759,7 +1836,7 @@ function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, onIndex
     })
     setDeleting(false)
     setPendingDelete(null)
-  }, [appId, token, pendingDelete, index, onIndexChange, flashError])
+  }, [appId, token, pendingDelete, mutateIndex, flashError])
 
   const handleRetry = useCallback(async () => {
     const params = gen.params || {}
@@ -2062,7 +2139,12 @@ function SetupView({ appId, token, prefs, onPrefsChange }) {
 // ---------------------------------------------------------------------------
 export default function App({ appId, token }) {
   const [prefs, setPrefs] = useState(null) // null while loading
-  const [index, setIndex] = useState(null) // null = loading, [] = empty
+  // Single owner of stories/index.json: all client mutations go through
+  // storyIndex.mutate (serialized + fresh-read). setIndex is for non-mutating
+  // refreshes (mount load, generation-complete poll reading the server's
+  // appended story).
+  const storyIndex = useStoryIndex({ appId, token })
+  const { index, setIndex, mutate: mutateIndex } = storyIndex
   const [showSettings, setShowSettings] = useState(false)
   const online = useOnline()
   const gen = useGeneration({ appId, token, onStoryReady: setIndex })
@@ -2139,6 +2221,7 @@ export default function App({ appId, token }) {
           onPrefsChange={setPrefs}
           index={index}
           onIndexChange={setIndex}
+          mutateIndex={mutateIndex}
           gen={gen}
         />
       </div>
