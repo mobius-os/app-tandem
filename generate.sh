@@ -12,10 +12,12 @@
 #   2a. Fetches recent story titles to avoid repeats.
 #   2b. Reads system-prompt.md (baked schema, role + output format) and appends the
 #      generation parameters as a trailing section.
-#   3. Runs the Claude CLI with NO tools — the output is pure JSON from the model's
-#      reasoning alone. No web search; stories are fictional. The chosen model
-#      (next_request.model, falling back to prefs.gen_model) is passed via --model;
-#      a failed custom-model run retries once on the platform default.
+#   3. Runs the chosen provider's CLI with NO tools — output is pure JSON from the
+#      model's reasoning alone. No web search; stories are fictional. The provider
+#      (claude | codex) and model come from next_request, falling back to
+#      prefs.gen_provider / prefs.gen_model; the model is passed via --model. A
+#      failed custom-model run retries once on the same provider's default model.
+#      claude → `claude -p`; codex → `codex exec --json --sandbox read-only`.
 #   4. Extracts the JSON story object from stdout and validates it minimally.
 #   5. Writes stories/<id>.json and updates stories/index.json.
 #   6. Clears next_request from prefs so the next generation reverts to free mode.
@@ -157,20 +159,31 @@ if req_lang_a:
 if req_lang_b:
     lang_b = req_lang_b
 
-# Generation model: the per-run record (next_request.model) wins over the
-# persisted setting (prefs.gen_model); scheduled runs have no next_request
-# and use the setting directly. Empty means the platform default. Old prefs
-# without gen_model fall through to "" by construction (lenient read).
-# Restrict to plausible model-id characters — anything else reads as default
-# so a corrupted value can't reach the CLI argv.
+# Generation provider + model: the per-run record (next_request) wins over the
+# persisted setting (prefs); scheduled runs have no next_request and use the
+# setting directly. Empty model means the chosen CLI's default. Old prefs
+# without gen_provider/gen_model fall through to "" by construction (lenient
+# read). An empty/unknown provider with a model set routes to claude (the
+# legacy default); "codex" routes to the codex CLI. Restrict the model to
+# plausible model-id characters — anything else reads as default so a corrupted
+# value can't reach the CLI argv.
+provider = next_req.get("provider") or prefs.get("gen_provider") or ""
+if not isinstance(provider, str):
+    provider = ""
+provider = provider.strip()
 model = next_req.get("model") or prefs.get("gen_model") or ""
 if not isinstance(model, str):
     model = ""
 model = model.strip()
 if model and not re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", model):
     model = ""
+# Normalize the provider to the two we support. Anything else (or empty with a
+# model present) routes to claude; empty with no model is the platform default
+# (still the claude CLI, no --model flag).
+if provider not in ("claude", "codex"):
+    provider = "claude" if model else ""
 
-print(f"{lang_a}\t{lang_b}\t{level}\t{topic}\t{mode}\t{ratings}\t{model}")
+print(f"{lang_a}\t{lang_b}\t{level}\t{topic}\t{mode}\t{ratings}\t{provider}\t{model}")
 PY
 )
 LANG_A="${PARAMS%%$'\t'*}"
@@ -184,8 +197,10 @@ REST4="${REST3#*$'\t'}"
 MODE="${REST4%%$'\t'*}"
 REST5="${REST4#*$'\t'}"
 RATINGS="${REST5%%$'\t'*}"
-GEN_MODEL="${REST5#*$'\t'}"
-log "Generating level=$LEVEL mode=$MODE model=${GEN_MODEL:-default} story: $LANG_A / $LANG_B (recent ratings: $RATINGS)"
+REST6="${REST5#*$'\t'}"
+GEN_PROVIDER="${REST6%%$'\t'*}"
+GEN_MODEL="${REST6#*$'\t'}"
+log "Generating level=$LEVEL mode=$MODE provider=${GEN_PROVIDER:-claude} model=${GEN_MODEL:-default} story: $LANG_A / $LANG_B (recent ratings: $RATINGS)"
 
 # 2b. Fetch recent story titles to avoid repeats.
 RECENT_TITLES="(none yet)"
@@ -234,8 +249,37 @@ PROMPT_FILE="$WORK_DIR/prompt.md"
 RAW_OUTPUT="$WORK_DIR/agent.out"
 STORY_FILE="$WORK_DIR/story.json"
 
+# Provider routing mirrors app-news/fetch.sh: claude runs `claude -p` with NO
+# tools (the story is pure-reasoning JSON), codex runs `codex exec --json` with
+# a read-only sandbox (no disk-write, no network — closes the prompt-injection
+# blast radius). Both pass --model only when one is set, so an empty model
+# falls back to the CLI's own default. The model id is passed verbatim; the
+# CLI is the authority on what resolves, and a rejected id degrades to the
+# default-model retry below.
+USER_TURN="Generate the bilingual story now. Output only the JSON object."
+
 run_agent() {
-  # $1 — model id, or empty for the platform default (no --model flag).
+  # $1 — model id, or empty for the chosen CLI's default (no --model flag).
+  if [ "$GEN_PROVIDER" = "codex" ]; then
+    if ! command -v codex >/dev/null 2>&1; then
+      log "ERROR: provider=codex but codex CLI not installed"
+      return 127
+    fi
+    local codex_flags=( exec --json --sandbox read-only )
+    if [ -n "$1" ]; then
+      codex_flags+=( --model "$1" )
+    fi
+    codex_flags+=( - )
+    printf '%s\n\n---\n\n%s\n' "$(cat "$PROMPT_FILE")" "$USER_TURN" \
+      | timeout "$TANDEM_TIMEOUT" codex "${codex_flags[@]}" \
+      > "$RAW_OUTPUT" 2>>"$LOG_FILE"
+    return $?
+  fi
+  # Default provider: claude.
+  if ! command -v claude >/dev/null 2>&1; then
+    log "ERROR: provider=claude but claude CLI not installed"
+    return 127
+  fi
   local flags=(
     --system-prompt-file "$PROMPT_FILE"
     --allowedTools ""
@@ -245,24 +289,47 @@ run_agent() {
     flags+=( --model "$1" )
   fi
   timeout "$TANDEM_TIMEOUT" env CLAUDE_CONFIG_DIR=/data/cli-auth/claude \
-    claude -p "Generate the bilingual story now. Output only the JSON object." \
+    claude -p "$USER_TURN" \
     "${flags[@]}" > "$RAW_OUTPUT" 2>>"$LOG_FILE"
 }
 
 # Prints the story id on success (story written to $STORY_FILE); prints
 # nothing on failure.
 extract_story() {
-  python3 - "$RAW_OUTPUT" "$STORY_FILE" "$LANG_A" "$LANG_B" "$LEVEL" <<'PY' 2>>"$LOG_FILE"
+  python3 - "$RAW_OUTPUT" "$STORY_FILE" "$LANG_A" "$LANG_B" "$LEVEL" "$GEN_PROVIDER" <<'PY' 2>>"$LOG_FILE"
 import json
 import re
 import sys
 import uuid as uuid_mod
 
 raw_path, out_path, lang_a, lang_b, level = sys.argv[1:6]
+provider = sys.argv[6] if len(sys.argv) > 6 else ""
 CEFR = ["A1", "A2", "B1", "B2", "C1", "C2"]
 
 with open(raw_path, encoding="utf-8", errors="replace") as f:
     raw = f.read()
+
+# Codex `exec --json` emits JSONL — the final `agent_message` event holds the
+# model's text. Unwrap it to the message body before brace-searching; fall back
+# to the raw stream if nothing parses (older codex shapes / truncation). Claude
+# `-p` already writes plain text, so this only runs for the codex provider.
+if provider == "codex":
+    last = ""
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        msg = obj.get("msg", obj) if isinstance(obj, dict) else {}
+        if isinstance(msg, dict) and msg.get("type") == "agent_message":
+            m = msg.get("message", "")
+            if isinstance(m, str):
+                last = m
+    if last:
+        raw = last
 
 # Strip markdown code fences if the model wrapped the JSON.
 # Then find the first { ... last } span.
@@ -345,22 +412,25 @@ print(story["id"], end="")
 PY
 }
 
-# Attempt list: the chosen model first (when set), then the platform
-# default. With no model set this is a single default-model attempt.
+# Attempt list: the chosen model first (when set), then the chosen provider's
+# own default. With no model set this is a single default-model attempt. The
+# provider is fixed across both attempts — an invalid/retired model id (or a
+# disconnected provider's rejected pick) degrades to that provider's default,
+# never to a hard failure.
 STORY_ID=""
 FAIL_BODY=""
 for ATTEMPT_MODEL in ${GEN_MODEL:+"$GEN_MODEL"} ""; do
   run_agent "$ATTEMPT_MODEL"
   CLI_EXIT=$?
   if [ "$CLI_EXIT" -ne 0 ]; then
-    log "ERROR: agent exited with code $CLI_EXIT (model=${ATTEMPT_MODEL:-default})"
+    log "ERROR: agent exited with code $CLI_EXIT (provider=${GEN_PROVIDER:-claude} model=${ATTEMPT_MODEL:-default})"
     FAIL_BODY="The story generator exited with an error. Check Settings."
   else
     STORY_ID=$(extract_story)
     if [ -n "$STORY_ID" ]; then
       break
     fi
-    log "ERROR: could not extract a valid story from agent output (model=${ATTEMPT_MODEL:-default})"
+    log "ERROR: could not extract a valid story from agent output (provider=${GEN_PROVIDER:-claude} model=${ATTEMPT_MODEL:-default})"
     FAIL_BODY="The agent did not return a valid story. Try again."
   fi
   if [ -n "$ATTEMPT_MODEL" ]; then

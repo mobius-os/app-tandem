@@ -194,9 +194,46 @@ function findPhraseTokenRange(tokens, phrase) {
 // Same inlining rationale as the schema block above: the installer compiles
 // only index.jsx. gen-model.mjs is the canonical, unit-tested copy.
 
-// 'Default' is the empty id: prefs carry no gen_model key and generate.sh
-// omits the --model flag, so the platform's own default model applies.
+// 'Default' is the empty model id: prefs carry no gen_model key and generate.sh
+// omits the --model flag, so the chosen provider's own default model applies.
 const DEFAULT_MODEL_ID = ''
+
+// Provider display order + UI labels. The model list inside each group is
+// fetched at runtime from `GET /api/auth/providers/models` (mirrors app-news).
+const PROVIDER_ORDER = [
+  { key: 'claude', label: 'Claude Code' },
+  { key: 'codex', label: 'OpenAI Codex' },
+]
+
+// Tiny fallback the picker falls back to when the fetch fails — older mobius
+// without the endpoint, offline, etc. One model per provider so the user can
+// still pick something; generate.sh passes --model through verbatim.
+const FALLBACK_GROUPS = [
+  {
+    key: 'claude',
+    label: 'Claude Code',
+    models: [{ id: 'claude-opus-4-8', name: 'Opus 4.8' }],
+  },
+  {
+    key: 'codex',
+    label: 'OpenAI Codex',
+    models: [{ id: 'gpt-5.5', name: 'gpt-5.5' }],
+  },
+]
+
+// 'Default' (empty provider + empty model) is the un-set state.
+const DEFAULT_PROVIDER = ''
+
+function normalizeGenProvider(prefs) {
+  if (!prefs || typeof prefs !== 'object') return DEFAULT_PROVIDER
+  const v = prefs.gen_provider
+  if (typeof v !== 'string') {
+    return normalizeGenModel(prefs) ? 'claude' : DEFAULT_PROVIDER
+  }
+  const t = v.trim()
+  if (t === 'claude' || t === 'codex') return t
+  return normalizeGenModel(prefs) ? 'claude' : DEFAULT_PROVIDER
+}
 
 function normalizeGenModel(prefs) {
   if (!prefs || typeof prefs !== 'object') return DEFAULT_MODEL_ID
@@ -205,23 +242,21 @@ function normalizeGenModel(prefs) {
   return v.trim()
 }
 
-function modelOptionsFrom(registry, currentId) {
-  const options = [{ id: DEFAULT_MODEL_ID, label: 'Default' }]
-  const claude = registry && registry.providers && registry.providers.claude
-  const entries = Array.isArray(claude) ? claude : []
-  for (const entry of entries) {
-    if (!entry || typeof entry.id !== 'string' || !entry.id) continue
-    const isCurrent = entry.id === currentId
-    if (entry.available === false && !isCurrent) continue
-    const label = typeof entry.label === 'string' ? entry.label : ''
-    const curated = label && label !== entry.id
-    if (!curated && !isCurrent) continue
-    options.push({ id: entry.id, label: curated ? label : entry.id })
+function buildProviderGroups(payload) {
+  if (!payload || typeof payload !== 'object') return FALLBACK_GROUPS
+  const groups = []
+  for (const meta of PROVIDER_ORDER) {
+    const rows = Array.isArray(payload[meta.key]) ? payload[meta.key] : null
+    if (!rows || rows.length === 0) continue
+    groups.push({
+      key: meta.key,
+      label: meta.label,
+      models: rows
+        .filter((r) => r && typeof r.id === 'string')
+        .map((r) => ({ id: r.id, name: r.name || r.id })),
+    })
   }
-  if (currentId && !options.some((o) => o.id === currentId)) {
-    options.push({ id: currentId, label: currentId })
-  }
-  return options
+  return groups
 }
 // ===== INLINE-GEN-MODEL END =====
 
@@ -328,13 +363,28 @@ async function savePrefs(appId, token, prefs) {
   return putJSON(`/api/storage/apps/${appId}/prefs.json`, token, prefs, appId)
 }
 
-// Model registry for the settings sheet (GET /api/models — owner-token
-// platform route, NOT app storage, so it goes through fetch directly).
-// Returns null on ANY failure; the sheet then offers only 'Default' and
-// generation proceeds unblocked — this preference must never gate the app.
-async function loadModelRegistry(token) {
+// Provider/model registry for the settings sheet — platform routes (NOT app
+// storage), so they go through fetch directly. Mirrors app-news:
+//   - GET /api/auth/providers/models → { claude: [{id,name}], codex: [...] }
+//   - GET /api/auth/providers/status → { claude: {authenticated}, ... }
+// Each returns null on ANY failure; the sheet then degrades (fallback groups,
+// "show everything as connected") and generation proceeds unblocked — this
+// preference must never gate the app.
+async function loadProviderModels(token) {
   try {
-    const r = await fetch('/api/models', {
+    const r = await fetch('/api/auth/providers/models', {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!r.ok) return null
+    return await r.json()
+  } catch {
+    return null
+  }
+}
+
+async function loadProviderStatus(token) {
+  try {
+    const r = await fetch('/api/auth/providers/status', {
       headers: { Authorization: `Bearer ${token}` },
     })
     if (!r.ok) return null
@@ -651,16 +701,21 @@ const CSS = `
   background: var(--surface); border-bottom: 1px solid var(--border);
 }
 .tn-brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
-.tn-mark {
-  flex: 0 0 auto; width: 30px; height: 30px; border-radius: 9px;
-  display: flex; align-items: center; justify-content: center;
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
-  color: var(--accent); font-size: 16px; font-weight: 700; line-height: 1;
+/* Brand mark = the real app icon, downscaled + cached server-side. */
+.tn-brand-icon {
+  flex: 0 0 auto; width: 26px; height: 26px; border-radius: 6px;
+  object-fit: cover; display: block;
 }
-.tn-brand-text { min-width: 0; line-height: 1.15; }
-.tn-title { margin: 0; font-size: 18px; font-weight: 700; letter-spacing: -0.015em; }
+/* Accent-dot fallback shown (via onError) when the install has no custom icon. */
+.tn-brand-fallback {
+  flex: 0 0 auto; width: 26px; height: 26px; border-radius: 6px;
+  align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent); font-size: 18px; font-weight: 700; line-height: 1;
+}
 .tn-subtitle {
-  display: block; margin-top: 2px; font-size: 12px; font-weight: 500; color: var(--muted);
+  min-width: 0; font-size: 13px; font-weight: 600; color: var(--text);
+  letter-spacing: -0.01em;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .tn-header-right { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
@@ -767,7 +822,7 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .tn-para-text { user-select: text; -webkit-user-select: text; }
 /* chrome elements (labels, marks, headers) are not */
 .tn-root h1, .tn-root h2, .tn-root h3,
-.tn-brand, .tn-mark, .tn-card-badge,
+.tn-brand, .tn-brand-fallback, .tn-card-badge,
 .tn-level-pill, .tn-rate-row {
   user-select: none; -webkit-user-select: none;
 }
@@ -1077,26 +1132,41 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 }
 .tn-scroll::-webkit-scrollbar-track { background: transparent; }
 
-/* Settings sheet — model list */
-.tn-model-list { display: flex; flex-direction: column; gap: 6px; }
+/* Settings sheet — provider-grouped model picker (mirrors app-news) */
+.tn-model-list { display: flex; flex-direction: column; gap: 10px; }
+.tn-model-group { display: flex; flex-direction: column; gap: 6px; }
+.tn-model-group-header {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.6px;
+  color: var(--muted); margin: 2px 2px 2px;
+  user-select: none;
+}
+.tn-model-group-hint {
+  font-size: 12px; font-weight: 500;
+  text-transform: none; letter-spacing: 0;
+  color: var(--muted); opacity: 0.85;
+}
 .tn-model-row {
-  display: flex; align-items: center; gap: 10px; min-height: 44px;
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px;
   padding: 10px 12px; border-radius: 10px; text-align: left;
   border: 1px solid var(--border); background: var(--surface);
   color: var(--text); font-family: var(--font); font-size: 14px; font-weight: 600;
   cursor: pointer; touch-action: manipulation; user-select: none;
   transition: border-color 0.14s, background 0.14s;
 }
-@media (hover: hover) { .tn-model-row:hover { border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); } }
-.tn-model-row:active { transform: scale(0.99); }
+@media (hover: hover) { .tn-model-row:not(:disabled):not(.is-selected):hover { border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); } }
+.tn-model-row:not(:disabled):active { transform: scale(0.99); }
 .tn-model-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tn-model-row:disabled { cursor: not-allowed; opacity: 0.55; pointer-events: none; }
 .tn-model-row.is-selected {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 10%, var(--surface));
 }
-.tn-model-label { flex: 0 0 auto; }
-.tn-model-id {
-  flex: 1; min-width: 0; font-size: 11px; font-weight: 500; color: var(--muted);
+.tn-model-row-main { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.tn-model-row-title { font-weight: 700; }
+.tn-model-row-sub {
+  font-size: 12px; font-weight: 500; color: var(--muted); font-family: var(--mono, monospace);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .tn-model-check { flex: 0 0 auto; color: var(--accent); font-weight: 700; }
@@ -1658,65 +1728,118 @@ function DeleteConfirmModal({ entry, busy, onConfirm, onCancel }) {
 
 // ---------------------------------------------------------------------------
 // SettingsSheet — the app's one settings surface (everything else moved into
-// the generate sheet). Holds only the story-generation model: a list fetched
-// from the platform registry, with 'Default' meaning "let the platform pick".
-// A tap selects AND persists immediately (prefs.gen_model); Done just closes.
-// Registry failure degrades to the Default-only list — never blocks anything.
+// the generate sheet). Holds only the story-generation agent: a provider-grouped
+// model picker (Claude / OpenAI Codex), matching app-news. Models are fetched
+// from `GET /api/auth/providers/models`; provider connection state from
+// `GET /api/auth/providers/status`. A tap selects AND persists immediately
+// (prefs.gen_provider + prefs.gen_model); Done just closes. Endpoint failure
+// degrades to FALLBACK_GROUPS / "Default only" — never blocks anything.
 // ---------------------------------------------------------------------------
 function SettingsSheet({ token, prefs, onSelectModel, onClose }) {
-  const current = normalizeGenModel(prefs)
-  // undefined = loading, null = fetch failed, object = registry response.
-  const [registry, setRegistry] = useState(undefined)
+  const currentProvider = normalizeGenProvider(prefs)
+  const currentModel = normalizeGenModel(prefs)
+  // null = still loading; otherwise the provider groups (FALLBACK_GROUPS or the
+  // stitched live list).
+  const [providerGroups, setProviderGroups] = useState(null)
+  // Whether the live models fetch actually succeeded (false → fallback list is
+  // showing; surface a soft hint).
+  const [modelsFailed, setModelsFailed] = useState(false)
+  // null = treat everything as connected (status fetch failed / older mobius);
+  // otherwise a Set of authenticated provider ids.
+  const [connectedProviders, setConnectedProviders] = useState(null)
 
   useEffect(() => {
     let cancelled = false
     ;(async () => {
-      const reg = await loadModelRegistry(token)
-      if (!cancelled) setRegistry(reg)
+      const [models, status] = await Promise.all([
+        loadProviderModels(token),
+        loadProviderStatus(token),
+      ])
+      if (cancelled) return
+      setProviderGroups(models ? buildProviderGroups(models) : FALLBACK_GROUPS)
+      setModelsFailed(!models)
+      if (status && typeof status === 'object') {
+        setConnectedProviders(new Set(
+          Object.entries(status)
+            .filter(([, v]) => v && v.authenticated)
+            .map(([k]) => k),
+        ))
+      }
     })()
     return () => { cancelled = true }
   }, [token])
 
-  const options = useMemo(
-    () => modelOptionsFrom(registry || null, current),
-    [registry, current],
-  )
+  // "Default" = no provider + no model: generate.sh runs the claude CLI with
+  // no --model flag. Always selectable so the owner can revert.
+  const onDefault = currentProvider === DEFAULT_PROVIDER && !currentModel
 
   return (
     <div className="tn-scrim" onClick={onClose} role="dialog" aria-modal="true" aria-label="Settings">
       <div className="tn-sheet" onClick={(e) => e.stopPropagation()}>
         <p className="tn-sheet-title">Settings</p>
         <div>
-          <div className="tn-setup-label">Story generation model</div>
+          <div className="tn-setup-label">Story generation agent</div>
           <p className="tn-setup-note">
-            Used when writing new stories. Default follows the platform&apos;s
-            current model.
+            Which model writes new stories. The list follows your chat model
+            visibility settings.
           </p>
-          {registry === undefined ? (
+          {providerGroups === null ? (
             <div className="tn-model-loading">
               <div className="tn-spinner tn-spinner-sm" role="status" aria-label="Loading models" />
             </div>
           ) : (
-            <div className="tn-model-list" role="radiogroup" aria-label="Story generation model">
-              {options.map((opt) => (
-                <button
-                  key={opt.id || 'default'}
-                  type="button"
-                  className={`tn-model-row${current === opt.id ? ' is-selected' : ''}`}
-                  role="radio"
-                  aria-checked={current === opt.id}
-                  onClick={() => onSelectModel(opt.id)}
-                >
-                  <span className="tn-model-label">{opt.label}</span>
-                  {opt.id && opt.id !== opt.label && <span className="tn-model-id">{opt.id}</span>}
-                  {current === opt.id && <span className="tn-model-check" aria-hidden="true">✓</span>}
-                </button>
-              ))}
+            <div className="tn-model-list" role="radiogroup" aria-label="Story generation agent">
+              <button
+                type="button"
+                className={`tn-model-row${onDefault ? ' is-selected' : ''}`}
+                role="radio"
+                aria-checked={onDefault}
+                onClick={() => onSelectModel(DEFAULT_PROVIDER, DEFAULT_MODEL_ID)}
+              >
+                <div className="tn-model-row-main">
+                  <span className="tn-model-row-title">Default</span>
+                  <span className="tn-model-row-sub">Platform&apos;s current model</span>
+                </div>
+                {onDefault && <span className="tn-model-check" aria-hidden="true">✓</span>}
+              </button>
+              {providerGroups.map((group) => {
+                const connected = !connectedProviders || connectedProviders.has(group.key)
+                return (
+                  <div key={group.key} className="tn-model-group">
+                    <div className="tn-model-group-header">
+                      <span>{group.label}</span>
+                      {!connected && <span className="tn-model-group-hint">not connected</span>}
+                    </div>
+                    {group.models.map((m) => {
+                      const on = currentProvider === group.key && currentModel === m.id
+                      const disabled = !connected && !on
+                      return (
+                        <button
+                          key={`${group.key}-${m.id}`}
+                          type="button"
+                          className={`tn-model-row${on ? ' is-selected' : ''}`}
+                          role="radio"
+                          aria-checked={on}
+                          disabled={disabled}
+                          onClick={() => onSelectModel(group.key, m.id)}
+                        >
+                          <div className="tn-model-row-main">
+                            <span className="tn-model-row-title">{m.name}</span>
+                            <span className="tn-model-row-sub">{m.id}</span>
+                          </div>
+                          {on && <span className="tn-model-check" aria-hidden="true">✓</span>}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )
+              })}
             </div>
           )}
-          {registry === null && (
+          {modelsFailed && providerGroups !== null && (
             <p className="tn-setup-note" style={{ marginTop: 8 }}>
-              Couldn&apos;t load the model list — new stories use the default model.
+              Couldn&apos;t load the live model list — showing a short fallback.
+              New stories still generate fine.
             </p>
           )}
         </div>
@@ -1854,12 +1977,14 @@ function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, onIndex
     const updatedLangA = lang_a || prefs.lang_a
     const updatedLangB = lang_b || prefs.lang_b
     const updatedLevel = CEFR_LEVELS.includes(level) ? level : (prefs.level || 'B1')
+    const genProvider = normalizeGenProvider(prefs)
     const genModel = normalizeGenModel(prefs)
     const params = {
       topic,
       mode,
       lang_a: updatedLangA,
       lang_b: updatedLangB,
+      ...(genProvider ? { provider: genProvider } : {}),
       ...(genModel ? { model: genModel } : {}),
     }
     const next = {
@@ -1914,6 +2039,7 @@ function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, onIndex
           mode: params.mode || 'free',
           lang_a: params.lang_a,
           lang_b: params.lang_b,
+          ...(params.provider ? { provider: params.provider } : {}),
           ...(params.model ? { model: params.model } : {}),
         },
       }
@@ -2221,11 +2347,15 @@ export default function App({ appId, token }) {
   const online = useOnline()
   const gen = useGeneration({ appId, token, onStoryReady: setIndex })
 
-  // Selecting a model persists immediately — there is no save button on the
-  // sheet. 'Default' (empty id) removes the key entirely so prefs written by
-  // this version stay readable as "no preference" everywhere.
-  const handleSelectModel = useCallback(async (id) => {
+  // Selecting an agent persists immediately — there is no save button on the
+  // sheet. 'Default' (empty provider + empty model) removes both keys entirely
+  // so prefs written by this version stay readable as "no preference"
+  // everywhere. provider+model are written together so generate.sh can route
+  // to the right CLI.
+  const handleSelectModel = useCallback(async (provider, id) => {
     const next = { ...prefs }
+    if (provider) next.gen_provider = provider
+    else delete next.gen_provider
     if (id) next.gen_model = id
     else delete next.gen_model
     setPrefs(next)
@@ -2262,14 +2392,26 @@ export default function App({ appId, token }) {
     <div className="tn-root">
       <style>{CSS}</style>
       <header className="tn-header">
+        {/* Brand mark = the real glossy app icon only, no name. Downscaled +
+            cached server-side (?size=64). onError hides the broken img and
+            reveals the accent-dot fallback for installs with no custom icon. */}
         <div className="tn-brand">
-          <span className="tn-mark" aria-hidden="true">T</span>
-          <div className="tn-brand-text">
-            <h1 className="tn-title">Tandem</h1>
-            {prefs.lang_a && prefs.lang_b && (
-              <span className="tn-subtitle">{prefs.lang_a} / {prefs.lang_b}</span>
-            )}
-          </div>
+          <img
+            src={`/api/apps/${appId}/icon?size=64`}
+            alt=""
+            width={26}
+            height={26}
+            className="tn-brand-icon"
+            onError={(e) => {
+              e.currentTarget.style.display = 'none'
+              const f = e.currentTarget.nextElementSibling
+              if (f) f.style.display = 'flex'
+            }}
+          />
+          <span className="tn-brand-fallback" style={{ display: 'none' }} aria-hidden="true">·</span>
+          {prefs.lang_a && prefs.lang_b && (
+            <span className="tn-subtitle">{prefs.lang_a} / {prefs.lang_b}</span>
+          )}
         </div>
         <div className="tn-header-right">
           <button
