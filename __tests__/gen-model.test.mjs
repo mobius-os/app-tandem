@@ -25,7 +25,10 @@ test('inlined gen-model helpers in index.jsx stay in sync with gen-model.mjs', (
     "const DEFAULT_MODEL_ID = ''",
     'if (typeof v !== \'string\') return DEFAULT_MODEL_ID',
     "const options = [{ id: DEFAULT_MODEL_ID, label: 'Default' }]",
-    'if (entry.available === false && entry.id !== currentId) continue',
+    'if (entry.available === false && !isCurrent) continue',
+    'const curated = label && label !== entry.id',
+    'if (!curated && !isCurrent) continue',
+    'options.push({ id: entry.id, label: curated ? label : entry.id })',
     'if (currentId && !options.some((o) => o.id === currentId)) {',
     'options.push({ id: currentId, label: currentId })',
   ]
@@ -78,11 +81,18 @@ test('gen_model values are trimmed', () => {
 // ---------------------------------------------------------------------------
 // modelOptionsFrom — registry parsing + graceful degradation.
 // ---------------------------------------------------------------------------
+// A realistic /api/models registry: curated entries (polished label distinct
+// from the id) interleaved with the raw, dated aliases the shell hides — same
+// model surfaced under a bare id (label === id, or no label at all). Curation
+// keeps the polished rows and drops the raw ones.
 const REGISTRY = {
   providers: {
     claude: [
       { id: 'claude-opus-4-8', label: 'Opus 4.8', provider: 'claude', available: true },
+      { id: 'claude-opus-4-8-20260115', label: 'claude-opus-4-8-20260115', provider: 'claude', available: true },
       { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6', provider: 'claude', available: true },
+      { id: 'claude-fable-5', provider: 'claude', available: true }, // no label at all
+      { id: 'claude-sonnet-4-6-20251101', provider: 'claude', available: true }, // raw dated alias
       { id: 'claude-old-model', label: 'Old Model', provider: 'claude', available: false },
     ],
     codex: [
@@ -101,11 +111,19 @@ test('malformed registries still offer Default', () => {
   }
 })
 
-test('Default is always first; claude models follow in registry order', () => {
+test('Default is always first; only curated (polished-label) claude models follow', () => {
   const options = modelOptionsFrom(REGISTRY, '')
   assert.deepEqual(options.map((o) => o.id), ['', 'claude-opus-4-8', 'claude-sonnet-4-6'])
   assert.equal(options[0].label, 'Default')
   assert.equal(options[1].label, 'Opus 4.8')
+  assert.equal(options[2].label, 'Sonnet 4.6')
+})
+
+test('raw-id entries (label === id, or no label) are excluded from the curated list', () => {
+  const ids = modelOptionsFrom(REGISTRY, '').map((o) => o.id)
+  assert.ok(!ids.includes('claude-opus-4-8-20260115'), 'dated alias whose label echoes its id is dropped')
+  assert.ok(!ids.includes('claude-fable-5'), 'entry with no label is dropped')
+  assert.ok(!ids.includes('claude-sonnet-4-6-20251101'), 'raw dated alias is dropped')
 })
 
 test('codex models are excluded — generate.sh runs the Claude CLI', () => {
@@ -121,28 +139,37 @@ test('retired (available: false) models are dropped unless currently selected', 
   assert.equal(retired.label, 'Old Model')
 })
 
+test('a current raw-id selection stays visible even though curation would drop it', () => {
+  // The user picked a dated alias before curation landed; it must remain
+  // selectable so they can see and change the stale choice.
+  const options = modelOptionsFrom(REGISTRY, 'claude-fable-5')
+  const kept = options.find((o) => o.id === 'claude-fable-5')
+  assert.ok(kept, 'current raw-id selection must survive curation')
+  assert.equal(kept.label, 'claude-fable-5', 'falls back to the raw id as its label')
+})
+
 test('a current selection missing from the registry is appended with its raw id', () => {
   const options = modelOptionsFrom(REGISTRY, 'claude-future-9')
   const appended = options[options.length - 1]
   assert.deepEqual(appended, { id: 'claude-future-9', label: 'claude-future-9' })
 })
 
-test('entries without a usable id are skipped; labels fall back to the id', () => {
+test('entries without a usable id are skipped; curated labels survive', () => {
   const registry = {
     providers: {
       claude: [
         { id: '', label: 'Empty' },
         { label: 'No id' },
         null,
-        { id: 'claude-x' },
-        { id: 'claude-y', label: '' },
+        { id: 'claude-x' }, // no label → raw, dropped from the curated list
+        { id: 'claude-y', label: '' }, // empty label → raw, dropped
+        { id: 'claude-z', label: 'Claude Z' }, // curated, kept
       ],
     },
   }
   const options = modelOptionsFrom(registry, '')
-  assert.deepEqual(options.map((o) => o.id), ['', 'claude-x', 'claude-y'])
-  assert.equal(options[1].label, 'claude-x')
-  assert.equal(options[2].label, 'claude-y')
+  assert.deepEqual(options.map((o) => o.id), ['', 'claude-z'])
+  assert.equal(options[1].label, 'Claude Z')
 })
 
 // ---------------------------------------------------------------------------

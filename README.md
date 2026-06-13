@@ -38,7 +38,7 @@ Generation is triggered by `POST /api/apps/<id>/run-job`, which runs `generate.s
 6. Writes `stories/<id>.json` and updates `stories/index.json`.
 7. Sends a push notification.
 
-The frontend never owns the run: it persists `generation-pending.json` (params + `known_ids` snapshot), POSTs run-job, and polls the index from the root component. The poll detects the new story by diffing against `known_ids`, then clears the pending record. A record older than ~6 minutes is treated as stale and the UI offers Retry / Dismiss (the poll keeps running so a late story still lands).
+The frontend never owns the run: it persists `generation-pending.json` (params + `known_ids` snapshot), POSTs run-job, and polls the index from the root component. The poll detects the new story by diffing against `known_ids`, then clears the pending record. Failures surface, they don't spin: if `generate.sh` drops a `generation-failed.json` marker (`{ message }`) the poll reads it and shows the body verbatim; otherwise a run that outlives the ~6-minute timeout with no story is shown as a rate-limit-flavoured error. Either way the UI lands on a "Generation failed" card with Retry / Dismiss instead of an open-ended spinner.
 
 Security model: the service token is held by `generate.sh` and never exposed to the model. The model only produces a JSON story; the shell script does the PUT.
 
@@ -48,7 +48,7 @@ Security model: the service token is held by `generate.sh` and never exposed to 
 
 - `story-schema.mjs` — `adaptLevel`, `lookupGlossary`, `normalizeStory` (lenient), `removeStoryFromIndex`, `buildIndexEntry`, `STORY_RATINGS`.
 - `text-align.mjs` — `tokenizeParagraph` (word + sentence indices), `sentenceCount`, `alignSentenceIndex` (clamped sentence-by-index pane alignment), `stripWordPunct`, `findPhraseTokenRange` (verbatim glossary phrase → token range).
-- `gen-model.mjs` — `normalizeGenModel` (lenient `prefs.gen_model` read), `modelOptionsFrom` (settings-sheet option list from the `/api/models` registry).
+- `gen-model.mjs` — `normalizeGenModel` (lenient `prefs.gen_model` read), `modelOptionsFrom` (settings-sheet option list from the `/api/models` registry — curated to the entries carrying a polished label, dropping raw/dated aliases, with Default first and the current selection always kept).
 
 ## Dev loop
 

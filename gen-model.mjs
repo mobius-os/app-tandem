@@ -20,19 +20,32 @@ export function normalizeGenModel(prefs) {
 // Builds the settings-sheet option list from the GET /api/models response
 // ({ providers: { claude: [{id, label, provider, available}], ... } }).
 // generate.sh runs the Claude CLI, so only Claude-provider models apply.
-// Tolerates a missing/malformed registry (offers just Default), drops
-// retired entries (available === false) unless currently selected, and
-// always includes the current selection — even when the registry no longer
-// lists it — so the user can see and change a stale choice.
+//
+// CURATION: the registry mixes the curated set the shell shows by default
+// (entries carrying a polished label distinct from the id) with raw, dated
+// aliases that surface the same model under its bare id (label === id, or no
+// label at all). The owner asked to "select from the list of preselected
+// agents we generally use, instead of the full list" — so only the curated
+// entries (available, with a polished label) are offered.
+//
+// Three invariants survive curation: Default is always first; a retired or
+// raw-id entry that happens to be the CURRENT selection still appears, so the
+// user can see and change a stale choice; and a current selection the registry
+// no longer lists at all is appended with its raw id.
 export function modelOptionsFrom(registry, currentId) {
   const options = [{ id: DEFAULT_MODEL_ID, label: 'Default' }]
   const claude = registry && registry.providers && registry.providers.claude
   const entries = Array.isArray(claude) ? claude : []
   for (const entry of entries) {
     if (!entry || typeof entry.id !== 'string' || !entry.id) continue
-    if (entry.available === false && entry.id !== currentId) continue
-    const label = typeof entry.label === 'string' && entry.label ? entry.label : entry.id
-    options.push({ id: entry.id, label })
+    const isCurrent = entry.id === currentId
+    if (entry.available === false && !isCurrent) continue
+    // A polished label (present and not just the id echoed back) marks a
+    // curated model. Raw-id entries are dropped unless currently selected.
+    const label = typeof entry.label === 'string' ? entry.label : ''
+    const curated = label && label !== entry.id
+    if (!curated && !isCurrent) continue
+    options.push({ id: entry.id, label: curated ? label : entry.id })
   }
   if (currentId && !options.some((o) => o.id === currentId)) {
     options.push({ id: currentId, label: currentId })

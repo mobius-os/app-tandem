@@ -211,9 +211,12 @@ function modelOptionsFrom(registry, currentId) {
   const entries = Array.isArray(claude) ? claude : []
   for (const entry of entries) {
     if (!entry || typeof entry.id !== 'string' || !entry.id) continue
-    if (entry.available === false && entry.id !== currentId) continue
-    const label = typeof entry.label === 'string' && entry.label ? entry.label : entry.id
-    options.push({ id: entry.id, label })
+    const isCurrent = entry.id === currentId
+    if (entry.available === false && !isCurrent) continue
+    const label = typeof entry.label === 'string' ? entry.label : ''
+    const curated = label && label !== entry.id
+    if (!curated && !isCurrent) continue
+    options.push({ id: entry.id, label: curated ? label : entry.id })
   }
   if (currentId && !options.some((o) => o.id === currentId)) {
     options.push({ id: currentId, label: currentId })
@@ -359,13 +362,41 @@ async function loadModelRegistry(token) {
 // after reload still diffs correctly).
 // ---------------------------------------------------------------------------
 const GEN_POLL_MS = 4000
-// generate.sh self-kills at TANDEM_TIMEOUT (300s); past this the record is
-// presumed orphaned and the UI offers Retry / Dismiss. The poll keeps
-// running while stale so a late story still surfaces.
-const GEN_STALE_MS = 6 * 60_000
+// generate.sh self-kills at TANDEM_TIMEOUT (300s); past this we stop trusting
+// the run and surface an error so a stuck generation never reads as an
+// infinite spinner (the owner hit a silent "took forever, nothing generated"
+// when a transient rate limit ate the run). Slightly past the script's own
+// timeout to give a genuinely-late story room to land first.
+const GEN_TIMEOUT_MS = 6 * 60_000
+// The default user-facing message when a run produces no story past the
+// timeout and generate.sh left no failure marker to explain why. Rate limits
+// are the common cause and self-heal, so the copy invites a retry.
+const GEN_TIMEOUT_MESSAGE =
+  'Generation failed — the model may be rate-limited. Try again shortly.'
 
 function pendingUrl(appId) {
   return `/api/storage/apps/${appId}/generation-pending.json`
+}
+
+// generate.sh may drop a failure marker { message } when a run can't produce a
+// story (e.g. the agent erred or returned nothing). When present the app reads
+// it and surfaces the body verbatim instead of the generic timeout copy.
+function failedUrl(appId) {
+  return `/api/storage/apps/${appId}/generation-failed.json`
+}
+
+// Pulls a human message out of whatever shape generate.sh wrote: a bare string,
+// or an object with a message/body/error field. Falls back to the generic
+// timeout copy so the UI always has something concrete to show.
+function failureMessageFrom(data) {
+  if (typeof data === 'string' && data.trim()) return data.trim()
+  if (data && typeof data === 'object') {
+    for (const key of ['message', 'body', 'error']) {
+      const v = data[key]
+      if (typeof v === 'string' && v.trim()) return v.trim()
+    }
+  }
+  return GEN_TIMEOUT_MESSAGE
 }
 
 function useGeneration({ appId, token, onStoryReady }) {
@@ -379,19 +410,29 @@ function useGeneration({ appId, token, onStoryReady }) {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
   }, [])
 
+  // Ends the run in the error phase and clears the pending record so the next
+  // attempt starts clean. The pending record is cleared but the failure marker
+  // (if any) is left for diagnostics — a Retry overwrites it on the next run.
+  const failGeneration = useCallback(async (startedAt, params, message) => {
+    stopPolling()
+    await deleteJSON(pendingUrl(appId), token, appId)
+    setGen({ phase: 'error', startedAt, params, error: message })
+  }, [appId, token, stopPolling])
+
   const beginPolling = useCallback((pending) => {
     stopPolling()
     const startedAt = Date.parse(pending.started_at) || Date.now()
     const known = new Set(Array.isArray(pending.known_ids) ? pending.known_ids : [])
     const params = pending.params || null
-    const phaseFor = () => (Date.now() - startedAt > GEN_STALE_MS ? 'stale' : 'running')
-    setGen({ phase: phaseFor(), startedAt, params, error: '' })
+    setGen({ phase: 'running', startedAt, params, error: '' })
     pollRef.current = setInterval(async () => {
+      // A story landing always wins, even if a stale failure marker lingers.
       const entries = await loadStoryIndex(appId, token)
       const fresh = entries.find((e) => e && !known.has(e.id))
       if (fresh) {
         stopPolling()
         await deleteJSON(pendingUrl(appId), token, appId)
+        await deleteJSON(failedUrl(appId), token, appId)
         setGen({ phase: 'done', startedAt, params, error: '' })
         onReadyRef.current?.(entries)
         // Cosmetic toast auto-hide only — the story is already delivered.
@@ -401,9 +442,21 @@ function useGeneration({ appId, token, onStoryReady }) {
         }, 3500)
         return
       }
-      setGen((g) => (g.phase === 'running' && phaseFor() === 'stale' ? { ...g, phase: 'stale' } : g))
+      // generate.sh told us it failed: surface its message immediately rather
+      // than spinning until the timeout.
+      const marker = await getJSON(failedUrl(appId), token, appId)
+      if (marker.ok && marker.data !== undefined) {
+        await deleteJSON(failedUrl(appId), token, appId)
+        await failGeneration(startedAt, params, failureMessageFrom(marker.data))
+        return
+      }
+      // No story, no marker, but the run has outlived the script's own
+      // timeout — treat it as failed instead of an endless spinner.
+      if (Date.now() - startedAt > GEN_TIMEOUT_MS) {
+        await failGeneration(startedAt, params, GEN_TIMEOUT_MESSAGE)
+      }
     }, GEN_POLL_MS)
-  }, [appId, token, stopPolling])
+  }, [appId, token, stopPolling, failGeneration])
 
   // Resume a pending generation across mounts / reloads.
   useEffect(() => {
@@ -429,6 +482,9 @@ function useGeneration({ appId, token, onStoryReady }) {
       params,
       known_ids: (currentIndex || []).map((e) => e.id),
     }
+    // Clear any marker left by a prior failed run BEFORE polling resumes —
+    // otherwise a Retry would re-read the old marker and fail instantly.
+    await deleteJSON(failedUrl(appId), token, appId)
     // Persist BEFORE kicking the job so a navigation right after the tap
     // can't lose the record.
     await putJSON(pendingUrl(appId), token, pending, appId)
@@ -1051,6 +1107,13 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
    story is being written, so the in-progress state lives where the result
    will appear (the small hint next to the button was easy to miss). */
 .tn-gen-card { border-style: dashed; }
+/* The failed-run variant: a danger-tinted card so the error reads as a state,
+   not a passing toast, and the Retry/Dismiss actions are obviously the way out. */
+.tn-gen-card-error {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
 
 /* Generation variety chips */
 .tn-chips { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0 4px; }
@@ -1875,7 +1938,8 @@ function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, onIndex
     )
   }
 
-  const genBusy = gen.phase === 'running' || gen.phase === 'stale'
+  const genBusy = gen.phase === 'running'
+  const genFailed = gen.phase === 'error'
   const generateDisabled = genBusy || !online
 
   return (
@@ -1897,32 +1961,40 @@ function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, onIndex
           {genBusy ? 'Generating…' : '+ Generate story'}
         </button>
         {gen.phase === 'done' && <span className="tn-status-hint">Story ready!</span>}
-        {gen.phase === 'error' && <span className="tn-error-hint">{gen.error}</span>}
         {errorMsg && <span className="tn-error-hint">{errorMsg}</span>}
       </div>
 
       {/* In-progress placeholder card — the new story's seat at the top of
-          the library. Stale state keeps the card (the poll is still running;
-          a late story can still land) and surfaces Retry / Dismiss here. */}
+          the library. */}
       {genBusy && (
         <div className="tn-card tn-gen-card" aria-live="polite">
           <div className="tn-spinner tn-spinner-sm" aria-hidden="true" />
           <div className="tn-card-main">
-            <div className="tn-card-title">
-              {gen.phase === 'stale' ? 'Taking longer than expected' : 'Writing your story…'}
-            </div>
+            <div className="tn-card-title">Writing your story…</div>
             <div className="tn-card-sub">
               {gen.params?.lang_b
                 ? `A new ${gen.params.lang_b} story — usually ready in a minute or two.`
                 : 'Usually ready in a minute or two.'}
             </div>
           </div>
-          {gen.phase === 'stale' && (
-            <span className="tn-stale-actions">
-              <button type="button" className="tn-stale-btn" onClick={handleRetry}>Retry</button>
-              <button type="button" className="tn-stale-btn" onClick={gen.dismiss}>Dismiss</button>
-            </span>
-          )}
+        </div>
+      )}
+
+      {/* Failure card — a run that errored (run-job rejected, the script left
+          a failure marker, or the poll timed out) surfaces the reason here
+          instead of spinning forever, with Retry / Dismiss to recover. */}
+      {genFailed && (
+        <div className="tn-card tn-gen-card tn-gen-card-error" role="alert" aria-live="assertive">
+          <div className="tn-card-main">
+            <div className="tn-card-title">Generation failed</div>
+            <div className="tn-card-sub tn-error-hint">
+              {gen.error || GEN_TIMEOUT_MESSAGE}
+            </div>
+          </div>
+          <span className="tn-stale-actions">
+            <button type="button" className="tn-stale-btn" onClick={handleRetry}>Retry</button>
+            <button type="button" className="tn-stale-btn" onClick={gen.dismiss}>Dismiss</button>
+          </span>
         </div>
       )}
 
