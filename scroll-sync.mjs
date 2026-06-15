@@ -53,3 +53,30 @@ export function computeSyncScrollTop(scrollTop, srcOffsets, dstOffsets) {
   // Target scrollTop: dst para top + same fraction of dst para height
   return dst.top + frac * dst.height
 }
+
+/**
+ * Proportional driver→follower mapping for synchronized panes.
+ *
+ * follower.scrollTop = (driver.scrollTop / driverMax) * followerMax
+ * where each pane's max scroll = scrollHeight - clientHeight.
+ *
+ * This is the robust mapping for aligning EXTREMES: driver at 0 maps the
+ * follower to 0, driver at its max maps the follower to its max. Paragraph
+ * heights differing between the two languages no longer leaves the follower
+ * unable to reach the top/bottom (the v0.7.0 anchor-based map could strand
+ * the follower because it never forced 0→0 / max→max).
+ *
+ * `driver`/`follower` are plain measurements: { scrollTop, scrollHeight,
+ * clientHeight }. Returns a number (the follower's target scrollTop) or null
+ * when either pane isn't scrollable (max <= 0) so callers can no-op safely
+ * instead of dividing by zero.
+ */
+export function computeProportionalScrollTop(driver, follower) {
+  if (!driver || !follower) return null
+  const driverMax = driver.scrollHeight - driver.clientHeight
+  const followerMax = follower.scrollHeight - follower.clientHeight
+  // Either pane unscrollable → no meaningful mapping; let the caller skip.
+  if (driverMax <= 0 || followerMax <= 0) return null
+  const ratio = Math.min(1, Math.max(0, driver.scrollTop / driverMax))
+  return ratio * followerMax
+}

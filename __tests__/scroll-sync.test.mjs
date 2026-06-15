@@ -2,7 +2,7 @@
 //   node --test __tests__/scroll-sync.test.mjs
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { computeSyncScrollTop, computeParaOffsets } from '../scroll-sync.mjs'
+import { computeSyncScrollTop, computeParaOffsets, computeProportionalScrollTop } from '../scroll-sync.mjs'
 
 // ---------------------------------------------------------------------------
 // computeSyncScrollTop
@@ -69,6 +69,48 @@ test('computeSyncScrollTop handles a single paragraph', () => {
   const dst = [{ top: 0, height: 300 }]
   // frac = 75/150 = 0.5 → target = 0 + 0.5*300 = 150
   assert.equal(computeSyncScrollTop(75, src, dst), 150)
+})
+
+// ---------------------------------------------------------------------------
+// computeProportionalScrollTop — driver/follower extreme alignment
+// ---------------------------------------------------------------------------
+test('computeProportionalScrollTop maps driver top (0) to follower 0', () => {
+  const driver = { scrollTop: 0, scrollHeight: 1000, clientHeight: 200 }
+  const follower = { scrollTop: 0, scrollHeight: 3000, clientHeight: 400 }
+  assert.equal(computeProportionalScrollTop(driver, follower), 0)
+})
+
+test('computeProportionalScrollTop maps driver max to follower max', () => {
+  // driverMax = 1000-200 = 800; followerMax = 3000-400 = 2600
+  const driver = { scrollTop: 800, scrollHeight: 1000, clientHeight: 200 }
+  const follower = { scrollTop: 0, scrollHeight: 3000, clientHeight: 400 }
+  assert.equal(computeProportionalScrollTop(driver, follower), 2600)
+})
+
+test('computeProportionalScrollTop maps the midpoint to the follower midpoint', () => {
+  // driverMax = 800; halfway = 400 → ratio 0.5 → 0.5 * 2600 = 1300
+  const driver = { scrollTop: 400, scrollHeight: 1000, clientHeight: 200 }
+  const follower = { scrollTop: 0, scrollHeight: 3000, clientHeight: 400 }
+  assert.equal(computeProportionalScrollTop(driver, follower), 1300)
+})
+
+test('computeProportionalScrollTop returns null when the driver is unscrollable', () => {
+  const driver = { scrollTop: 0, scrollHeight: 200, clientHeight: 200 }
+  const follower = { scrollTop: 0, scrollHeight: 3000, clientHeight: 400 }
+  assert.equal(computeProportionalScrollTop(driver, follower), null)
+})
+
+test('computeProportionalScrollTop returns null when the follower is unscrollable', () => {
+  const driver = { scrollTop: 100, scrollHeight: 1000, clientHeight: 200 }
+  const follower = { scrollTop: 0, scrollHeight: 400, clientHeight: 400 }
+  assert.equal(computeProportionalScrollTop(driver, follower), null)
+})
+
+test('computeProportionalScrollTop clamps overscroll to the follower max', () => {
+  // scrollTop beyond max (rubber-band) → ratio clamped to 1 → followerMax
+  const driver = { scrollTop: 950, scrollHeight: 1000, clientHeight: 200 }
+  const follower = { scrollTop: 0, scrollHeight: 3000, clientHeight: 400 }
+  assert.equal(computeProportionalScrollTop(driver, follower), 2600)
 })
 
 // ---------------------------------------------------------------------------

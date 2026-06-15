@@ -745,6 +745,20 @@ const CSS = `
   color: var(--accent); font-size: 18px; font-weight: 700; line-height: 1;
 }
 .tn-header-right { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+/* App name + static tagline beside the icon (replaces the bare icon-only bar). */
+.tn-brand-text {
+  display: flex; flex-direction: column; justify-content: center;
+  min-width: 0; line-height: 1.2;
+}
+.tn-brand-name {
+  font-size: 15px; font-weight: 700; color: var(--text);
+  letter-spacing: -0.01em;
+}
+.tn-brand-tagline {
+  font-size: 11.5px; font-weight: 500; color: var(--muted);
+  letter-spacing: 0; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
 /* /mobius-ui:Header */
 
 /* mobius-ui:Empty v1 — keep in sync; library candidate. Diverge below the marker only. */
@@ -1333,6 +1347,21 @@ function computeSyncScrollTop(scrollTop, srcOffsets, dstOffsets) {
   return dst.top + frac * dst.height
 }
 
+// Proportional driver→follower mapping. follower.scrollTop =
+// (driver.scrollTop / driverMax) * followerMax, with each max = scrollHeight -
+// clientHeight. Aligns the EXTREMES (0→0, max→max) so the follower can always
+// reach the top and bottom even when the two languages have different total
+// heights. Returns null when a pane isn't scrollable (avoids /0). Canonical +
+// tested in scroll-sync.mjs.
+function computeProportionalScrollTop(driver, follower) {
+  if (!driver || !follower) return null
+  const driverMax = driver.scrollHeight - driver.clientHeight
+  const followerMax = follower.scrollHeight - follower.clientHeight
+  if (driverMax <= 0 || followerMax <= 0) return null
+  const ratio = Math.min(1, Math.max(0, driver.scrollTop / driverMax))
+  return ratio * followerMax
+}
+
 function StoryReader({ story, onClose, onRate }) {
   const [bLead, setBLead] = useState(false)
   const [rating, setRating] = useState(story.rating || null)
@@ -1356,7 +1385,14 @@ function StoryReader({ story, onClose, onRate }) {
   const topPaneRef = useRef(null)
   const botPaneRef = useRef(null)
   const readerBodyRef = useRef(null)
-  const isSyncingRef = useRef(false)
+  // Driver/follower sync (replaces the old reciprocal isSyncingRef guard).
+  // activePaneRef names the pane the user is actively scrolling ('top' | 'bot').
+  // ONLY the active pane's onScroll drives the other; the follower's resulting
+  // onScroll is ignored because it isn't the active pane — so there is no
+  // reciprocal feedback loop to debounce, and no jitter. A pointer/wheel/touch
+  // interaction over a pane (re)claims it as the driver; the claim simply gets
+  // reassigned by the next interaction (no timer to expire).
+  const activePaneRef = useRef(null)
   const rafRef = useRef(null)
 
   // Stable per-paragraph ref arrays (one object per paragraph, reused across renders)
@@ -1404,41 +1440,50 @@ function StoryReader({ story, onClose, onRate }) {
     return () => cancelAnimationFrame(raf)
   }, [story.id])
 
-  const handleTopScroll = useCallback(() => {
-    if (isSyncingRef.current) return
+  // The single rAF-throttled sync. Whichever pane is the active driver maps its
+  // scroll position PROPORTIONALLY onto the follower (extremes align: top→top,
+  // bottom→bottom). The follower's own onScroll re-enters here but is dropped
+  // because the follower is never the active pane — the feedback loop is gone,
+  // so there is nothing to debounce and nothing to jitter.
+  const syncFromActive = useCallback((source) => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current)
     rafRef.current = requestAnimationFrame(() => {
+      // Use the `source` captured when the scroll fired, NOT a live re-read of
+      // activePaneRef. A driver-claim (onMouseEnter over the other pane) can land
+      // between the handler's gate check and this frame; re-reading the ref here
+      // would then sync from the wrong pane — the exact jitter this design fixes.
+      if (!source) return
       const topPane = topPaneRef.current
       const botPane = botPaneRef.current
       if (!topPane || !botPane) return
-      maybeLatchEnd(topPane)
-      const srcOffsets = computeParaOffsets(topParaRefs)
-      const dstOffsets = computeParaOffsets(botParaRefs)
-      const target = computeSyncScrollTop(topPane.scrollTop, srcOffsets, dstOffsets)
+      const driver = source === 'top' ? topPane : botPane
+      const follower = source === 'top' ? botPane : topPane
+      maybeLatchEnd(driver)
+      const target = computeProportionalScrollTop(driver, follower)
       if (target === null) return
-      isSyncingRef.current = true
-      botPane.scrollTop = target
-      requestAnimationFrame(() => { isSyncingRef.current = false })
+      // Instant assignment (no smooth tween): the follower lands in one frame so
+      // it can never lag/jitter behind an animation, and its echo onScroll is a
+      // no-op anyway (follower isn't the active pane).
+      follower.scrollTop = target
     })
-  }, [topParaRefs, botParaRefs, maybeLatchEnd])
+  }, [maybeLatchEnd])
+
+  // A pointer/wheel/touch over a pane claims it as the scroll driver. Cheap and
+  // idempotent; the next interaction over the other pane simply reassigns it.
+  const claimTop = useCallback(() => { activePaneRef.current = 'top' }, [])
+  const claimBot = useCallback(() => { activePaneRef.current = 'bot' }, [])
+
+  const handleTopScroll = useCallback(() => {
+    // Only drive when the top pane is the active driver; otherwise this is the
+    // follower echoing a top-driven (or word-tap-driven) move — ignore it.
+    if (activePaneRef.current !== 'top') { maybeLatchEnd(topPaneRef.current); return }
+    syncFromActive('top')
+  }, [syncFromActive, maybeLatchEnd])
 
   const handleBotScroll = useCallback(() => {
-    if (isSyncingRef.current) return
-    if (rafRef.current) cancelAnimationFrame(rafRef.current)
-    rafRef.current = requestAnimationFrame(() => {
-      const topPane = topPaneRef.current
-      const botPane = botPaneRef.current
-      if (!topPane || !botPane) return
-      maybeLatchEnd(botPane)
-      const srcOffsets = computeParaOffsets(botParaRefs)
-      const dstOffsets = computeParaOffsets(topParaRefs)
-      const target = computeSyncScrollTop(botPane.scrollTop, srcOffsets, dstOffsets)
-      if (target === null) return
-      isSyncingRef.current = true
-      topPane.scrollTop = target
-      requestAnimationFrame(() => { isSyncingRef.current = false })
-    })
-  }, [topParaRefs, botParaRefs, maybeLatchEnd])
+    if (activePaneRef.current !== 'bot') { maybeLatchEnd(botPaneRef.current); return }
+    syncFromActive('bot')
+  }, [syncFromActive, maybeLatchEnd])
 
   const handleDividerPointerDown = useCallback((e) => {
     e.preventDefault()
@@ -1478,24 +1523,20 @@ function StoryReader({ story, onClose, onRate }) {
     setHighlight(null)
   }, [])
 
-  // After a tap, bring the aligned paragraph in the OTHER pane into view so
-  // the highlighted context is visible — WITHOUT moving the pane the reader
-  // just tapped. scrollIntoView walks every scrollable ancestor and so nudges
-  // the tapped pane (and the reader body) too; instead we compute the other
-  // pane's aligned scrollTop directly (same paragraph-offset math as
-  // sync-scroll) and assign it on that one element. Runs post-render (no
-  // timers). isSyncingRef suppresses the onScroll echo so this targeted move
-  // doesn't trigger a reciprocal sync back onto the tapped pane.
+  // After a tap, bring the aligned paragraph in the OTHER pane into view so the
+  // highlighted context is visible — WITHOUT moving the pane the reader just
+  // tapped. scrollIntoView walks every scrollable ancestor and so nudges the
+  // tapped pane (and the reader body) too; instead we compute the other pane's
+  // aligned scrollTop directly (paragraph-offset math — proportional mapping
+  // wouldn't land the SAME paragraph, which is the whole point of a word tap)
+  // and assign it on that one element. Runs post-render, no timers.
   //
-  // The move MUST be instant. A smooth scroll animates over ~300ms, but the
-  // isSyncingRef guard below is released after a single rAF (~16ms) — matching
-  // the instant sync handlers. With a smooth scroll the still-animating other
-  // pane keeps firing onScroll long after the guard clears, and those events
-  // re-enter handleBotScroll/handleTopScroll, which assign the TAPPED pane's
-  // scrollTop — so the tapped pane would bounce. Assigning scrollTop directly
-  // (instant) lands the whole move inside the single rAF the guard covers: the
-  // other pane settles before the guard releases, no late onScroll escapes, and
-  // the tapped pane is never written to on this path.
+  // Driver/follower keeps this from regressing into a self-nudge: we mark the
+  // TAPPED pane as the active driver, then write the OTHER (follower) pane. The
+  // follower's resulting onScroll re-enters handleTop/BotScroll, sees it is not
+  // the active pane, and is dropped — so this targeted move is never misread as
+  // a user scroll that would drag the tapped pane back. The move is instant
+  // (no smooth tween) so the follower settles in one frame.
   useEffect(() => {
     if (!highlight) return
     const tappedIsTop = (highlight.lang === 'a' && !bLead) || (highlight.lang === 'b' && bLead)
@@ -1514,9 +1555,8 @@ function StoryReader({ story, onClose, onRate }) {
     const dstOffsets = computeParaOffsets(otherParaRefs)
     const target = computeSyncScrollTop(anchorTop, srcOffsets, dstOffsets)
     if (target === null) return
-    isSyncingRef.current = true
-    otherPane.scrollTop = target // instant — see the single-rAF guard note above
-    requestAnimationFrame(() => { isSyncingRef.current = false })
+    activePaneRef.current = tappedIsTop ? 'top' : 'bot' // tapped pane is the driver
+    otherPane.scrollTop = target // instant; the follower's echo onScroll is ignored
   }, [highlight, bLead, topParaRefs, botParaRefs])
 
   const handleRate = useCallback((verdict) => {
@@ -1559,6 +1599,10 @@ function StoryReader({ story, onClose, onRate }) {
           style={{ height: `${splitRatio * 100}%` }}
           onScroll={handleTopScroll}
           onClick={handlePaneClick}
+          onPointerDown={claimTop}
+          onWheel={claimTop}
+          onTouchStart={claimTop}
+          onMouseEnter={claimTop}
         >
           <div className="tn-story-head">
             <p className="tn-story-title-a">{bLead ? story.title_b : story.title_a}</p>
@@ -1602,6 +1646,10 @@ function StoryReader({ story, onClose, onRate }) {
           style={{ height: `${(1 - splitRatio) * 100}%` }}
           onScroll={handleBotScroll}
           onClick={handlePaneClick}
+          onPointerDown={claimBot}
+          onWheel={claimBot}
+          onTouchStart={claimBot}
+          onMouseEnter={claimBot}
         >
           <div className="tn-story-head">
             <p className="tn-story-title-a">{bLead ? story.title_a : story.title_b}</p>
@@ -2491,6 +2539,12 @@ export default function App({ appId, token }) {
             }}
           />
           <span className="tn-brand-fallback" style={{ display: 'none' }} aria-hidden="true">·</span>
+          {/* Static name + tagline. NOT the old dynamic language indicator
+              (removed in v0.7.0) — this never changes per story/language. */}
+          <div className="tn-brand-text">
+            <span className="tn-brand-name">Tandem</span>
+            <span className="tn-brand-tagline">Read side by side in two languages</span>
+          </div>
         </div>
         <div className="tn-header-right">
           <button
