@@ -45,6 +45,10 @@ test('inlined schema in index.jsx stays in sync with story-schema.mjs', () => {
     "if (STORY_RATINGS.includes(story.rating)) normalized.rating = story.rating",
     "return index.filter((e) => !(e && typeof e === 'object' && e.id === storyId))",
     "e && typeof e === 'object' && e.id === storyId ? { ...e, rating: verdict } : e,",
+    // v0.9.0 summary handling — guard the new normalizeStory + buildIndexEntry lines.
+    "const summary = typeof story.summary === 'string' ? story.summary.trim() : ''",
+    "if (summary) normalized.summary = summary",
+    "summary: story.summary || '',",
   ]
   for (const snippet of distinctive) {
     assert.ok(
@@ -449,9 +453,55 @@ test('buildIndexEntry returns only the index-relevant fields', () => {
   const story = normalizeStory(GOOD_STORY)
   const entry = buildIndexEntry(story)
   assert.deepEqual(Object.keys(entry).sort(), [
-    'created', 'id', 'lang_a', 'lang_b', 'level', 'title_a', 'title_b',
+    'created', 'id', 'lang_a', 'lang_b', 'level', 'summary', 'title_a', 'title_b',
   ])
   assert.equal(entry.id, GOOD_STORY.id)
   // paragraphs should NOT be present
   assert.equal('paragraphs' in entry, false)
+})
+
+// ---------------------------------------------------------------------------
+// summary (v0.9.0) — the one-line premise that feeds the next generation's
+// PREMISE-level anti-repeat list. LENIENT on read: a story or index entry
+// without a summary must still normalize / build, so stories written before
+// summaries existed keep opening.
+// ---------------------------------------------------------------------------
+test('normalizeStory carries a non-empty summary through', () => {
+  const s = normalizeStory({ ...GOOD_STORY, summary: 'A cartographer races a rival to map an unexplored coast.' })
+  assert.ok(s)
+  assert.equal(s.summary, 'A cartographer races a rival to map an unexplored coast.')
+})
+
+test('normalizeStory trims a padded summary', () => {
+  const s = normalizeStory({ ...GOOD_STORY, summary: '   A quiet village hides a clockwork secret.  ' })
+  assert.ok(s)
+  assert.equal(s.summary, 'A quiet village hides a clockwork secret.')
+})
+
+test('normalizeStory omits summary when absent (old stories still open)', () => {
+  const s = normalizeStory(GOOD_STORY)
+  assert.ok(s, 'a summary-less story must normalize')
+  assert.equal('summary' in s, false)
+})
+
+test('normalizeStory omits an empty/blank or non-string summary', () => {
+  for (const bad of ['', '   ', 42, { x: 1 }, null]) {
+    const s = normalizeStory({ ...GOOD_STORY, summary: bad })
+    assert.ok(s)
+    assert.equal('summary' in s, false, `summary ${JSON.stringify(bad)} should be dropped`)
+  }
+})
+
+test('buildIndexEntry projects a present summary onto the index entry', () => {
+  const s = normalizeStory({ ...GOOD_STORY, summary: 'Two friends decode a letter found in an attic.' })
+  const entry = buildIndexEntry(s)
+  assert.equal(entry.summary, 'Two friends decode a letter found in an attic.')
+})
+
+test('buildIndexEntry defaults summary to "" for a summary-less story (stable shape)', () => {
+  const s = normalizeStory(GOOD_STORY) // no summary
+  const entry = buildIndexEntry(s)
+  // Round-trips leniently: the key is present but empty, so the index entry
+  // shape is stable whether or not the story carried a summary.
+  assert.equal(entry.summary, '')
 })

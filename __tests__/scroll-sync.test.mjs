@@ -2,7 +2,46 @@
 //   node --test __tests__/scroll-sync.test.mjs
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { dirname, join } from 'node:path'
 import { computeSyncScrollTop, computeParaOffsets, computeProportionalScrollTop } from '../scroll-sync.mjs'
+
+const HERE = dirname(fileURLToPath(import.meta.url))
+
+// ---------------------------------------------------------------------------
+// Sync guard: index.jsx ships an INLINED copy of these scroll-sync helpers
+// (same pattern as story-schema / gen-model). If the canonical source changes
+// but the inline doesn't, the shipped app silently diverges. Assert the
+// distinctive function bodies appear verbatim (whitespace-normalised) inside
+// index.jsx. computeProportionalScrollTop is the v0.8.0 driver/follower map.
+// ---------------------------------------------------------------------------
+test('inlined scroll-sync helpers in index.jsx stay in sync with scroll-sync.mjs', () => {
+  const norm = (s) => s.replace(/\s+/g, ' ')
+  const index = norm(readFileSync(join(HERE, '..', 'index.jsx'), 'utf8'))
+  const distinctive = [
+    // computeParaOffsets
+    'if (!ref || !ref.current) return null',
+    'height: ref.current.offsetHeight || 1,',
+    // computeSyncScrollTop
+    'if (!srcOffsets || !dstOffsets || srcOffsets.length !== dstOffsets.length) return null',
+    'if (srcOffsets[i].top <= scrollTop) anchorIdx = i',
+    'const frac = Math.min(1, Math.max(0, (scrollTop - src.top) / src.height))',
+    'return dst.top + frac * dst.height',
+    // computeProportionalScrollTop (the canonical v0.8.0 driver/follower body)
+    'const driverMax = driver.scrollHeight - driver.clientHeight',
+    'const followerMax = follower.scrollHeight - follower.clientHeight',
+    'if (driverMax <= 0 || followerMax <= 0) return null',
+    'const ratio = Math.min(1, Math.max(0, driver.scrollTop / driverMax))',
+    'return ratio * followerMax',
+  ]
+  for (const snippet of distinctive) {
+    assert.ok(
+      index.includes(norm(snippet)),
+      `index.jsx inline scroll-sync drifted: missing "${snippet}"`,
+    )
+  }
+})
 
 // ---------------------------------------------------------------------------
 // computeSyncScrollTop

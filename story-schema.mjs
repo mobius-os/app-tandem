@@ -83,6 +83,8 @@ export function normalizeStory(story) {
   }
   if (paragraphs.length < 1) return null
   const normalized = { id, title_a, title_b, lang_a, lang_b, level, created, paragraphs }
+  const summary = typeof story.summary === 'string' ? story.summary.trim() : ''
+  if (summary) normalized.summary = summary
   if (STORY_RATINGS.includes(story.rating)) normalized.rating = story.rating
   return normalized
 }
@@ -116,6 +118,8 @@ export function setRatingInIndex(index, storyId, verdict) {
 }
 
 // Build a normalized index entry from a story (for storing in stories/index.json).
+// `summary` (Feature 1) feeds the next generation's premise-level anti-repeat
+// list; old stories without one project to '' so the index entry shape is stable.
 export function buildIndexEntry(story) {
   return {
     id: story.id,
@@ -125,5 +129,6 @@ export function buildIndexEntry(story) {
     lang_b: story.lang_b,
     level: story.level,
     created: story.created,
+    summary: story.summary || '',
   }
 }

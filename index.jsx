@@ -81,6 +81,8 @@ function normalizeStory(story) {
   }
   if (paragraphs.length < 1) return null
   const normalized = { id, title_a, title_b, lang_a, lang_b, level, created, paragraphs }
+  const summary = typeof story.summary === 'string' ? story.summary.trim() : ''
+  if (summary) normalized.summary = summary
   if (STORY_RATINGS.includes(story.rating)) normalized.rating = story.rating
   return normalized
 }
@@ -118,6 +120,7 @@ function buildIndexEntry(story) {
     lang_b: story.lang_b,
     level: story.level,
     created: story.created,
+    summary: story.summary || '',
   }
 }
 // ===== INLINE-SCHEMA END =====
@@ -1706,8 +1709,11 @@ function StoryReader({ story, onClose, onRate }) {
 // ---------------------------------------------------------------------------
 // GenerateSheet — bottom sheet for choosing story topic + mode before generating.
 // ---------------------------------------------------------------------------
-function GenerateSheet({ onGenerate, onCancel, initialLangA, initialLangB, initialLevel }) {
+function GenerateSheet({ onGenerate, onCancel, initialLangA, initialLangB, initialLevel, initialStoryline }) {
   const [topicInput, setTopicInput] = useState('')
+  // Storyline persists across generations (unlike topic), so pre-fill it from
+  // the saved pref and let the reader edit or clear it.
+  const [storylineInput, setStorylineInput] = useState(initialStoryline || '')
   const [selectedMode, setSelectedMode] = useState(null)
   const [langA, setLangA] = useState(initialLangA || 'English')
   const [langB, setLangB] = useState(initialLangB || '')
@@ -1727,6 +1733,7 @@ function GenerateSheet({ onGenerate, onCancel, initialLangA, initialLangB, initi
   const handleGenerate = () => {
     onGenerate({
       topic: topicInput.trim(),
+      storyline: storylineInput.trim(),
       mode: selectedMode || 'free',
       lang_a: langA.trim() || (initialLangA || 'English'),
       lang_b: langB.trim() || (initialLangB || ''),
@@ -1777,7 +1784,7 @@ function GenerateSheet({ onGenerate, onCancel, initialLangA, initialLangB, initi
           </select>
         </div>
         <div>
-          <label className="tn-setup-label" htmlFor="tn-gen-topic">Topic (optional)</label>
+          <label className="tn-setup-label" htmlFor="tn-gen-topic">Topic (optional, this story only)</label>
           <input
             id="tn-gen-topic"
             className="tn-input"
@@ -1786,6 +1793,20 @@ function GenerateSheet({ onGenerate, onCancel, initialLangA, initialLangB, initi
             placeholder="e.g. a street musician in Tokyo, friendship, a rainy day"
             autoComplete="off"
           />
+        </div>
+        <div>
+          <label className="tn-setup-label" htmlFor="tn-gen-storyline">Series / storyline (optional)</label>
+          <input
+            id="tn-gen-storyline"
+            className="tn-input"
+            value={storylineInput}
+            onChange={(e) => setStorylineInput(e.target.value)}
+            placeholder="continue the adventures of Mira the cartographer; a sci-fi mystery serial"
+            autoComplete="off"
+          />
+          <p className="tn-setup-note" style={{ margin: '6px 0 0' }}>
+            Persists across every story you generate (unlike Topic). Each story continues the same characters and arc. Clear it to go back to standalone stories.
+          </p>
         </div>
         <div>
           <div className="tn-setup-label" style={{ marginBottom: 0 }}>Genre</div>
@@ -2086,7 +2107,7 @@ function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, onIndex
     await handleRate(story, verdict)
   }, [stories, appId, token, handleRate, flashError])
 
-  const handleSheetGenerate = useCallback(async ({ topic, mode, lang_a, lang_b, level }) => {
+  const handleSheetGenerate = useCallback(async ({ topic, storyline, mode, lang_a, lang_b, level }) => {
     setShowGenerateSheet(false)
     // Persist choices back to prefs so the next sheet opens with the same
     // defaults, and save next_request so generate.sh picks them up. The
@@ -2099,6 +2120,10 @@ function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, onIndex
     const updatedLevel = CEFR_LEVELS.includes(level) ? level : (prefs.level || 'B1')
     const genProvider = normalizeGenProvider(prefs)
     const genModel = normalizeGenModel(prefs)
+    // Storyline is PERSISTENT — it lives at prefs.storyline (set below, outside
+    // next_request) so generate.sh's post-run next_request wipe never clears it.
+    // It also rides inside next_request for per-run record/retry symmetry.
+    const storylineVal = (storyline || '').trim()
     const params = {
       topic,
       mode,
@@ -2106,12 +2131,14 @@ function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, onIndex
       lang_b: updatedLangB,
       ...(genProvider ? { provider: genProvider } : {}),
       ...(genModel ? { model: genModel } : {}),
+      ...(storylineVal ? { storyline: storylineVal } : {}),
     }
     const next = {
       ...prefs,
       lang_a: updatedLangA,
       lang_b: updatedLangB,
       level: updatedLevel,
+      storyline: storylineVal,
       next_request: params,
     }
     onPrefsChange(next)
@@ -2152,6 +2179,8 @@ function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, onIndex
     // Restore next_request — generate.sh clears it after each run, so a
     // retry without this would fall back to the prefs defaults.
     if (params.lang_a && params.lang_b) {
+      // `...prefs` already preserves the persistent prefs.storyline; mirror it
+      // into next_request too so the per-run record stays self-contained.
       const next = {
         ...prefs,
         next_request: {
@@ -2161,6 +2190,7 @@ function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, onIndex
           lang_b: params.lang_b,
           ...(params.provider ? { provider: params.provider } : {}),
           ...(params.model ? { model: params.model } : {}),
+          ...(params.storyline ? { storyline: params.storyline } : {}),
         },
       }
       onPrefsChange(next)
@@ -2329,6 +2359,7 @@ function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, onIndex
           initialLangA={prefs.lang_a}
           initialLangB={prefs.lang_b}
           initialLevel={prefs.level}
+          initialStoryline={prefs.storyline}
         />
       )}
 
@@ -2522,9 +2553,10 @@ export default function App({ appId, token }) {
     <div className="tn-root">
       <style>{CSS}</style>
       <header className="tn-header">
-        {/* Brand mark = the real glossy app icon only, no name. Downscaled +
-            cached server-side (?size=64). onError hides the broken img and
-            reveals the accent-dot fallback for installs with no custom icon. */}
+        {/* Brand mark = the real glossy app icon plus the name + tagline below.
+            The icon is downscaled + cached server-side (?size=64); onError hides
+            the broken img and reveals the accent-dot fallback for installs with
+            no custom icon. */}
         <div className="tn-brand">
           <img
             src={`/api/apps/${appId}/icon?size=64`}

@@ -88,7 +88,8 @@ PREFS_CODE=$(curl -sS -o "$PREFS_FILE" -w "%{http_code}" \
   "$API_BASE_URL/api/storage/apps/$APP_ID/prefs.json") || PREFS_CODE=000
 
 # Parse prefs; fall back to English/Spanish B1 defaults.
-# Output 7 tab-separated fields: lang_a, lang_b, level, topic, mode, ratings, model
+# Output tab-separated fields: lang_a, lang_b, level, topic, mode, ratings,
+# provider, model, storyline.
 PARAMS=$(python3 - "$PREFS_FILE" "$PREFS_CODE" <<'PY'
 import json
 import re
@@ -149,6 +150,17 @@ if not isinstance(next_req, dict):
     next_req = {}
 topic = (next_req.get("topic") or "").strip()
 mode = (next_req.get("mode") or "free").strip()
+# Storyline is a PERSISTENT pref (it survives the post-run next_request wipe),
+# so it reads from prefs first. A per-run next_request.storyline (written for
+# retry symmetry) overrides it, mirroring the topic/model precedence pattern.
+# Lenient: old prefs without a storyline fall through to "".
+storyline = prefs.get("storyline")
+if not isinstance(storyline, str):
+    storyline = ""
+nr_storyline = next_req.get("storyline")
+if isinstance(nr_storyline, str) and nr_storyline.strip():
+    storyline = nr_storyline
+storyline = " ".join(storyline.split())
 if mode not in ("free", "classic", "daily_life", "travel"):
     mode = "free"
 # Allow per-generate language override (from the generate sheet)
@@ -183,7 +195,7 @@ if model and not re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", model):
 if provider not in ("claude", "codex"):
     provider = "claude" if model else ""
 
-print(f"{lang_a}\t{lang_b}\t{level}\t{topic}\t{mode}\t{ratings}\t{provider}\t{model}")
+print(f"{lang_a}\t{lang_b}\t{level}\t{topic}\t{mode}\t{ratings}\t{provider}\t{model}\t{storyline}")
 PY
 )
 LANG_A="${PARAMS%%$'\t'*}"
@@ -199,25 +211,46 @@ REST5="${REST4#*$'\t'}"
 RATINGS="${REST5%%$'\t'*}"
 REST6="${REST5#*$'\t'}"
 GEN_PROVIDER="${REST6%%$'\t'*}"
-GEN_MODEL="${REST6#*$'\t'}"
-log "Generating level=$LEVEL mode=$MODE provider=${GEN_PROVIDER:-claude} model=${GEN_MODEL:-default} story: $LANG_A / $LANG_B (recent ratings: $RATINGS)"
+REST7="${REST6#*$'\t'}"
+GEN_MODEL="${REST7%%$'\t'*}"
+STORYLINE="${REST7#*$'\t'}"
+log "Generating level=$LEVEL mode=$MODE provider=${GEN_PROVIDER:-claude} model=${GEN_MODEL:-default} storyline=${STORYLINE:-(none)} story: $LANG_A / $LANG_B (recent ratings: $RATINGS)"
 
-# 2b. Fetch recent story titles to avoid repeats.
+# 2b. Fetch recent stories (title + premise summary) to avoid repeating not
+# just titles but PREMISES. When a storyline is set, the newest entry's summary
+# also feeds the "Previously in this series" continuity line below — both come
+# from this single index read (no extra I/O).
 RECENT_TITLES="(none yet)"
+PREV_SUMMARY=""
 INDEX_EARLY_FILE="$WORK_DIR/index-early.json"
 EARLY_CODE=$(curl -sS -o "$INDEX_EARLY_FILE" -w "%{http_code}" \
   -H "Authorization: Bearer $SERVICE_TOKEN" \
   "$API_BASE_URL/api/storage/apps/$APP_ID/stories/index.json") || EARLY_CODE=000
 if [ "$EARLY_CODE" = "200" ]; then
-  RECENT_TITLES=$(python3 -c '
+  # Emit two tab-separated fields: the recent-stories block, then the newest
+  # story's summary (for series continuity). The index is newest-first.
+  RECENT_PARSED=$(python3 -c '
 import json, sys
 try:
     idx = json.load(open(sys.argv[1], encoding="utf-8"))
-    titles = [e.get("title_a","") for e in (idx if isinstance(idx,list) else []) if e.get("title_a")]
-    print("\n".join(f"- {t}" for t in titles[:5]) or "(none yet)")
+    entries = [e for e in (idx if isinstance(idx, list) else []) if isinstance(e, dict) and e.get("title_a")]
+    lines = []
+    for e in entries[:10]:
+        # Collapse internal whitespace: a stored title/summary with an embedded
+        # newline would otherwise inject extra prompt lines and break structure.
+        title = " ".join(str(e.get("title_a", "")).split())
+        summary = " ".join(str(e.get("summary", "")).split())
+        # Stories written before summaries existed contribute a title-only line.
+        lines.append(f"- {title} — {summary}" if summary else f"- {title}")
+    prev_summary = " ".join(str(entries[0].get("summary", "")).split()) if entries else ""
+    block = "\n".join(lines) or "(none yet)"
+    # Tab-separate the (possibly multi-line) block from the single-line summary.
+    print(block + "\t" + prev_summary)
 except Exception:
-    print("(none yet)")
+    print("(none yet)\t")
 ' "$INDEX_EARLY_FILE")
+  RECENT_TITLES="${RECENT_PARSED%$'\t'*}"
+  PREV_SUMMARY="${RECENT_PARSED##*$'\t'}"
 fi
 
 # 3. Build the combined prompt file (system prompt + generation parameters).
@@ -230,10 +263,16 @@ PROMPT_FILE="$WORK_DIR/prompt.md"
   printf 'CEFR level: %s\n' "$LEVEL"
   printf 'Mode: %s   (one of: free | classic | daily_life | travel)\n' "$MODE"
   printf 'Topic: %s  (empty = no constraint; non-empty = use this as the story'"'"'s theme/setting)\n' "$TOPIC"
+  printf 'Storyline / series (carry across stories): %s  (empty = standalone story; non-empty = honor the recurring characters/arc — see "Series continuity")\n' "$STORYLINE"
   printf 'Recent difficulty ratings from the reader (oldest first): %s\n' "$RATINGS"
   printf 'Steer within the CEFR level: ratings leaning "too hard" mean simpler sentences and more common vocabulary; "too easy" means richer structures and rarer words.\n'
-  printf '\nRecent story titles to avoid repeating (titles in lang_a):\n'
+  printf '\nRecent stories to avoid repeating the PREMISES of (lang_a title — one-line summary):\n'
   printf '%s\n' "$RECENT_TITLES"
+  # Series continuity bonus: when a storyline is set, surface the newest story's
+  # summary so the model can continue the arc. Reuses the step-2b index read.
+  if [ -n "$STORYLINE" ] && [ -n "$PREV_SUMMARY" ]; then
+    printf '\nPreviously in this series: %s\n' "$PREV_SUMMARY"
+  fi
   printf '\nGenerate a fresh story now. Output ONLY the JSON object described above.\n'
 } > "$PROMPT_FILE"
 
@@ -369,6 +408,16 @@ title_b = (story.get("title_b") or "").strip()
 if not title_a or not title_b:
     sys.exit(2)
 
+# Carry the one-line premise summary through (Feature 1). Optional on read —
+# a story without one is still valid; the field just won't feed the next
+# generation's anti-repeat list. Drop an empty/blank summary so the stored
+# record stays clean.
+summary = story.get("summary")
+if isinstance(summary, str) and summary.strip():
+    story["summary"] = summary.strip()
+else:
+    story.pop("summary", None)
+
 paragraphs = story.get("paragraphs") or []
 if not isinstance(paragraphs, list):
     sys.exit(2)
@@ -483,7 +532,7 @@ with open(story_file, encoding="utf-8") as f:
     story = json.load(f)
 
 entry = {k: story.get(k, "") for k in
-         ["id", "title_a", "title_b", "lang_a", "lang_b", "level", "created"]}
+         ["id", "title_a", "title_b", "lang_a", "lang_b", "level", "created", "summary"]}
 
 index = []
 if index_code == "200":

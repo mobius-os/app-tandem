@@ -38,6 +38,24 @@ test('system prompt explains difficulty-rating steering', () => {
   assert.match(SYSTEM_PROMPT, /too easy/)
 })
 
+// v0.9.0 — premise-level anti-repeat + persistent series continuity.
+test('system prompt requires a one-sentence summary in the output format', () => {
+  // The summary field must be in the JSON output schema...
+  assert.match(SYSTEM_PROMPT, /"summary":/)
+  // ...with the ≤25-word, lang_a, premise (not moral) contract spelled out.
+  assert.match(SYSTEM_PROMPT, /≤25 words/)
+  assert.match(SYSTEM_PROMPT, /premise/i)
+})
+
+test('system prompt steers variety toward PREMISES, not just titles', () => {
+  assert.match(SYSTEM_PROMPT, /PREMISES/)
+})
+
+test('system prompt has a Series continuity section honouring the storyline', () => {
+  assert.match(SYSTEM_PROMPT, /Series continuity/)
+  assert.match(SYSTEM_PROMPT, /Previously in this series/)
+})
+
 // ---------------------------------------------------------------------------
 // generate.sh
 // ---------------------------------------------------------------------------

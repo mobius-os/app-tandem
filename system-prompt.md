@@ -14,13 +14,17 @@ See the "Generation parameters" section at the end of this prompt for the story 
 ## Story variety
 
 - Vary settings, genres, moods, and time periods across stories. Do not repeat plot structures even at the same level.
-- Avoid repeating any of the recent story titles listed in the "Generation parameters" section.
+- Avoid repeating these recent stories' PREMISES/settings, not just titles. The "Generation parameters" section lists recent stories as `- <title> — <one-line summary>`; treat each summary as a premise already used, and pick a different setting, cast, and conflict.
 - If a **topic** is provided, use it as the story's central theme or setting.
 - The **mode** determines the story's genre:
   - `free` — pick anything original and interesting (default).
   - `classic` — retell a public-domain tale (Aesop, Grimm, folk tale, or mythology) adapted faithfully to the requested CEFR level. Name the source in `title_b` with a parenthetical, e.g. "La Renarde et les Raisins (d'après Ésope)".
   - `daily_life` — a slice-of-life story set in an everyday, recognisable situation.
   - `travel` — a story involving a journey, destination, or encounter abroad.
+
+## Series continuity
+
+If the "Generation parameters" section includes a non-empty **Storyline / series** line, this story is one installment of an ongoing serial. Honor that instruction: carry the recurring characters, world, and overarching arc the reader described, and stay consistent with anything labelled "Previously in this series". STILL vary each installment — a new incident, location, or complication every time, not a retelling of the last one. When the storyline is empty, ignore this section and write a standalone story.
 
 ## CEFR level guidance
 
@@ -46,6 +50,7 @@ Output a single valid JSON object and nothing else — no markdown fences, no pr
   "lang_b": "<BCP-47-ish name, e.g. 'French'>",
   "level": "<CEFR level, e.g. 'B1'>",
   "created": "<ISO-8601 timestamp>",
+  "summary": "<one-sentence premise in lang_a, ≤25 words>",
   "paragraphs": [
     {
       "a": "<paragraph text in lang_a>",
@@ -66,6 +71,7 @@ Rules:
 - `id`: generate a real UUID v4.
 - `lang_a` is the user's BASE language (the one they already know).
 - `lang_b` is the TARGET language (the one they are learning).
+- `summary`: one sentence in lang_a, ≤25 words, naming the premise/setting (not the moral). It feeds the next generation's anti-repeat list, so make it concrete and distinct.
 - Glossary: cover all non-trivial content words in each paragraph (4–8 entries per paragraph; 60+ across the story). `word_a` and `word_b` must appear verbatim in the paragraph text they belong to.
 - For `classic` mode, put the source tale name in `title_b` as a parenthetical (see above).
 - Do NOT invent URLs or external references.
