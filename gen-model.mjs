@@ -3,8 +3,11 @@
 // would 404 at compile time). Edit here first, then mirror the change in the
 // INLINE-GEN-MODEL block; __tests__/gen-model.test.mjs asserts the sync.
 
-// 'Default' is the empty model id: prefs carry no gen_model key and generate.sh
-// omits the --model flag, so the chosen provider's own default model applies.
+// '' is the internal "unset" model id (formerly surfaced as the "Default" row,
+// now removed from the picker). It still flows through generate.sh as "no
+// --model flag" so the chosen provider's own default applies — but the UI never
+// LANDS a user here anymore: migrateGenPrefs rewrites an unset selection onto a
+// concrete model so every install shows a real, selectable row.
 export const DEFAULT_MODEL_ID = ''
 
 // Provider display order + UI labels. The model list inside each group is
@@ -34,10 +37,47 @@ export const FALLBACK_GROUPS = [
   },
 ]
 
-// 'Default' (empty provider + empty model) is the un-set state: generate.sh
-// runs the claude CLI with no --model flag, so the platform's own default
-// applies. The picker always offers Default first so the owner can revert.
+// '' is the internal "unset" provider (empty provider + empty model = the old
+// "Default" state). generate.sh treats it as the claude CLI with no --model
+// flag. The picker no longer offers a Default row, so this is a transient state
+// only: migrateGenPrefs converts a stored unset selection to a concrete one.
 export const DEFAULT_PROVIDER = ''
+
+// The concrete default a fresh/migrated install lands on. Because the Default
+// ("unset" = empty provider+model) row was removed from the picker, existing
+// users sitting on it can no longer re-select it and must not be left with NO
+// selected row. We migrate them onto the first real Claude model the picker
+// always offers — FALLBACK_GROUPS[0].models[0] — so there is exactly one source
+// of truth for "what Default becomes". generate.sh still resolves this id
+// through the CLI (and retries on the provider default if the id is unknown),
+// so the migration can never wedge generation.
+export const CONCRETE_DEFAULT_PROVIDER = FALLBACK_GROUPS[0].key
+export const CONCRETE_DEFAULT_MODEL_ID = FALLBACK_GROUPS[0].models[0].id
+
+// True when prefs carry NO usable generation selection — the old "Default"
+// state: a missing/empty/whitespace model, or the literal label sentinel
+// 'Default' (case-insensitive) in case any install ever stored it verbatim.
+// After the Default row was removed these prefs would render with nothing
+// selected, so migrateGenPrefs rewrites them once to the concrete default.
+export function needsGenPrefsMigration(prefs) {
+  if (!prefs || typeof prefs !== 'object') return false
+  const model = normalizeGenModel(prefs) // trims; '' for missing/whitespace
+  return model === '' || model.toLowerCase() === 'default'
+}
+
+// One-time, idempotent migration. Returns a NEW prefs object with a concrete
+// provider+model when the stored selection was the now-removed Default, or the
+// SAME object (reference-equal) when nothing needed changing — callers use the
+// identity check to decide whether to persist. Never throws on bad input.
+export function migrateGenPrefs(prefs) {
+  if (!prefs || typeof prefs !== 'object') return prefs
+  if (!needsGenPrefsMigration(prefs)) return prefs
+  return {
+    ...prefs,
+    gen_provider: CONCRETE_DEFAULT_PROVIDER,
+    gen_model: CONCRETE_DEFAULT_MODEL_ID,
+  }
+}
 
 // Reads the chosen generation provider out of prefs. Lenient by contract:
 // prefs written before gen_provider existed, or carrying anything but a known

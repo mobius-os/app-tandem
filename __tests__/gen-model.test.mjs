@@ -9,10 +9,14 @@ import { dirname, join } from 'node:path'
 import {
   DEFAULT_MODEL_ID,
   DEFAULT_PROVIDER,
+  CONCRETE_DEFAULT_PROVIDER,
+  CONCRETE_DEFAULT_MODEL_ID,
   PROVIDER_ORDER,
   FALLBACK_GROUPS,
   normalizeGenProvider,
   normalizeGenModel,
+  needsGenPrefsMigration,
+  migrateGenPrefs,
   buildProviderGroups,
 } from '../gen-model.mjs'
 
@@ -28,6 +32,12 @@ test('inlined gen-model helpers in index.jsx stay in sync with gen-model.mjs', (
   const distinctive = [
     "const DEFAULT_MODEL_ID = ''",
     "const DEFAULT_PROVIDER = ''",
+    'const CONCRETE_DEFAULT_PROVIDER = FALLBACK_GROUPS[0].key',
+    'const CONCRETE_DEFAULT_MODEL_ID = FALLBACK_GROUPS[0].models[0].id',
+    'return model === \'\' || model.toLowerCase() === \'default\'',
+    'if (!needsGenPrefsMigration(prefs)) return prefs',
+    'gen_provider: CONCRETE_DEFAULT_PROVIDER,',
+    'gen_model: CONCRETE_DEFAULT_MODEL_ID,',
     "{ key: 'claude', label: 'Claude Code' },",
     "{ key: 'codex', label: 'OpenAI Codex' },",
     "if (typeof v !== 'string') return DEFAULT_MODEL_ID",
@@ -86,6 +96,77 @@ test('gen_provider + gen_model round-trip the way the app writes them', () => {
   assert.equal(normalizeGenProvider(backToDefault), DEFAULT_PROVIDER)
   assert.equal(normalizeGenModel(backToDefault), DEFAULT_MODEL_ID)
   assert.deepEqual(backToDefault, base)
+})
+
+// ---------------------------------------------------------------------------
+// migrateGenPrefs — the Default picker row was removed. A user sitting on the
+// old "unset" selection (no/empty gen_model) must be rewritten ONCE to a
+// concrete real model so the picker shows a selected row and generation never
+// crashes on a null/empty selection.
+// ---------------------------------------------------------------------------
+test('CONCRETE_DEFAULT_* point at the first real Claude model the picker offers', () => {
+  assert.equal(CONCRETE_DEFAULT_PROVIDER, FALLBACK_GROUPS[0].key)
+  assert.equal(CONCRETE_DEFAULT_MODEL_ID, FALLBACK_GROUPS[0].models[0].id)
+  // And those are concrete, non-empty values — the whole point of the migration.
+  assert.equal(CONCRETE_DEFAULT_PROVIDER, 'claude')
+  assert.ok(CONCRETE_DEFAULT_MODEL_ID && CONCRETE_DEFAULT_MODEL_ID !== DEFAULT_MODEL_ID)
+})
+
+test('needsGenPrefsMigration flags the old Default / unset states', () => {
+  assert.equal(needsGenPrefsMigration({}), true) // no key at all
+  assert.equal(needsGenPrefsMigration({ gen_model: '' }), true)
+  assert.equal(needsGenPrefsMigration({ gen_model: '   ' }), true)
+  assert.equal(needsGenPrefsMigration({ gen_model: 'Default' }), true)
+  assert.equal(needsGenPrefsMigration({ gen_model: 'default' }), true)
+  assert.equal(needsGenPrefsMigration({ gen_provider: '', gen_model: '' }), true)
+  // A provider with no model is still unset (picker only selects them together).
+  assert.equal(needsGenPrefsMigration({ gen_provider: 'claude' }), true)
+})
+
+test('needsGenPrefsMigration leaves a real model selection alone', () => {
+  assert.equal(needsGenPrefsMigration({ gen_provider: 'claude', gen_model: 'claude-opus-4-8' }), false)
+  assert.equal(needsGenPrefsMigration({ gen_provider: 'codex', gen_model: 'gpt-5.5' }), false)
+  // Non-object / null inputs never need migration (and never throw).
+  assert.equal(needsGenPrefsMigration(null), false)
+  assert.equal(needsGenPrefsMigration(undefined), false)
+  assert.equal(needsGenPrefsMigration('prefs'), false)
+})
+
+test('migrateGenPrefs rewrites a Default user onto a concrete real model', () => {
+  const base = { lang_a: 'English', lang_b: 'Bosnian', level: 'B1' }
+  const migrated = migrateGenPrefs(base)
+  assert.notEqual(migrated, base) // new object — caller persists it
+  assert.equal(migrated.gen_provider, CONCRETE_DEFAULT_PROVIDER)
+  assert.equal(migrated.gen_model, CONCRETE_DEFAULT_MODEL_ID)
+  // Other prefs are preserved untouched.
+  assert.equal(migrated.lang_a, 'English')
+  assert.equal(migrated.lang_b, 'Bosnian')
+  assert.equal(migrated.level, 'B1')
+  // And the migrated result now reads back as a real, non-empty selection — so
+  // the picker highlights a row and generate.sh gets a concrete --model.
+  assert.equal(normalizeGenProvider(migrated), CONCRETE_DEFAULT_PROVIDER)
+  assert.equal(normalizeGenModel(migrated), CONCRETE_DEFAULT_MODEL_ID)
+})
+
+test('migrateGenPrefs maps a literal "Default" string too', () => {
+  const migrated = migrateGenPrefs({ gen_provider: '', gen_model: 'Default' })
+  assert.equal(migrated.gen_provider, CONCRETE_DEFAULT_PROVIDER)
+  assert.equal(migrated.gen_model, CONCRETE_DEFAULT_MODEL_ID)
+})
+
+test('migrateGenPrefs is idempotent and identity-stable for a real selection', () => {
+  const real = { lang_a: 'English', gen_provider: 'codex', gen_model: 'gpt-5.5' }
+  const out = migrateGenPrefs(real)
+  assert.equal(out, real) // SAME reference — caller skips the redundant write
+  // Running it again on an already-migrated object is a no-op.
+  const once = migrateGenPrefs({})
+  assert.equal(migrateGenPrefs(once), once)
+})
+
+test('migrateGenPrefs never throws on bad input (returns it unchanged)', () => {
+  assert.equal(migrateGenPrefs(null), null)
+  assert.equal(migrateGenPrefs(undefined), undefined)
+  assert.equal(migrateGenPrefs('nope'), 'nope')
 })
 
 // ---------------------------------------------------------------------------

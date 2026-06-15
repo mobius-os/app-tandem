@@ -194,8 +194,9 @@ function findPhraseTokenRange(tokens, phrase) {
 // Same inlining rationale as the schema block above: the installer compiles
 // only index.jsx. gen-model.mjs is the canonical, unit-tested copy.
 
-// 'Default' is the empty model id: prefs carry no gen_model key and generate.sh
-// omits the --model flag, so the chosen provider's own default model applies.
+// '' is the internal "unset" model id (the "Default" picker row was removed).
+// It still flows through generate.sh as "no --model flag", but the UI no longer
+// lands a user here — migrateGenPrefs rewrites an unset selection onto a real model.
 const DEFAULT_MODEL_ID = ''
 
 // Provider display order + UI labels. The model list inside each group is
@@ -221,8 +222,38 @@ const FALLBACK_GROUPS = [
   },
 ]
 
-// 'Default' (empty provider + empty model) is the un-set state.
+// '' is the internal "unset" provider (empty provider + empty model = the old
+// "Default" state). The picker no longer offers a Default row; migrateGenPrefs
+// converts a stored unset selection to a concrete one.
 const DEFAULT_PROVIDER = ''
+
+// The concrete default a fresh/migrated install lands on — the first real
+// Claude model the picker always offers (single source of truth for "what
+// Default becomes"). generate.sh still resolves it through the CLI, with a
+// retry on the provider default if unknown, so the migration can't wedge gen.
+const CONCRETE_DEFAULT_PROVIDER = FALLBACK_GROUPS[0].key
+const CONCRETE_DEFAULT_MODEL_ID = FALLBACK_GROUPS[0].models[0].id
+
+// True when prefs carry no usable generation selection — the old "Default"
+// state (missing/empty/whitespace model, or the literal 'Default' sentinel).
+function needsGenPrefsMigration(prefs) {
+  if (!prefs || typeof prefs !== 'object') return false
+  const model = normalizeGenModel(prefs)
+  return model === '' || model.toLowerCase() === 'default'
+}
+
+// One-time, idempotent migration: rewrite an unset selection to the concrete
+// default. Returns a NEW object when it changes anything, else the SAME object
+// (reference-equal) so the caller can skip a redundant write. Never throws.
+function migrateGenPrefs(prefs) {
+  if (!prefs || typeof prefs !== 'object') return prefs
+  if (!needsGenPrefsMigration(prefs)) return prefs
+  return {
+    ...prefs,
+    gen_provider: CONCRETE_DEFAULT_PROVIDER,
+    gen_model: CONCRETE_DEFAULT_MODEL_ID,
+  }
+}
 
 function normalizeGenProvider(prefs) {
   if (!prefs || typeof prefs !== 'object') return DEFAULT_PROVIDER
@@ -703,20 +734,15 @@ const CSS = `
 .tn-brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
 /* Brand mark = the real app icon, downscaled + cached server-side. */
 .tn-brand-icon {
-  flex: 0 0 auto; width: 26px; height: 26px; border-radius: 6px;
+  flex: 0 0 auto; width: 34px; height: 34px; border-radius: 6px;
   object-fit: cover; display: block;
 }
 /* Accent-dot fallback shown (via onError) when the install has no custom icon. */
 .tn-brand-fallback {
-  flex: 0 0 auto; width: 26px; height: 26px; border-radius: 6px;
+  flex: 0 0 auto; width: 34px; height: 34px; border-radius: 6px;
   align-items: center; justify-content: center;
   background: color-mix(in srgb, var(--accent) 16%, transparent);
   color: var(--accent); font-size: 18px; font-weight: 700; line-height: 1;
-}
-.tn-subtitle {
-  min-width: 0; font-size: 13px; font-weight: 600; color: var(--text);
-  letter-spacing: -0.01em;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .tn-header-right { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 /* /mobius-ui:Header */
@@ -1052,11 +1078,19 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 
 /* Inline tap highlight: the tapped word (and its glossary translation in the
    other pane) gets the strong accent; the surrounding sentence — in BOTH
-   panes, aligned sentence-by-index — gets the soft accent. */
-.tn-ctx { background: color-mix(in srgb, var(--accent) 11%, transparent); }
+   panes, aligned sentence-by-index — gets the soft accent. The aligned
+   context is deliberately emphatic so the tapped/translated context reads at
+   a glance: a tinted band with a faint accent underline on the sentence, and
+   a high-contrast pill + ring on the hit word. All accent-token driven so it
+   tracks the active theme instead of fighting it. */
+.tn-ctx {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--accent) 45%, transparent);
+}
 .tn-word.is-hit {
-  background: color-mix(in srgb, var(--accent) 34%, transparent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 34%, transparent);
+  background: color-mix(in srgb, var(--accent) 52%, transparent);
+  color: var(--text); font-weight: 700;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 70%, transparent);
 }
 
 /* Difficulty bar — floats over the reader bottom edge, outside both panes.
@@ -1445,14 +1479,44 @@ function StoryReader({ story, onClose, onRate }) {
   }, [])
 
   // After a tap, bring the aligned paragraph in the OTHER pane into view so
-  // the highlighted context is visible. Runs post-render (no timers).
+  // the highlighted context is visible — WITHOUT moving the pane the reader
+  // just tapped. scrollIntoView walks every scrollable ancestor and so nudges
+  // the tapped pane (and the reader body) too; instead we compute the other
+  // pane's aligned scrollTop directly (same paragraph-offset math as
+  // sync-scroll) and assign it on that one element. Runs post-render (no
+  // timers). isSyncingRef suppresses the onScroll echo so this targeted move
+  // doesn't trigger a reciprocal sync back onto the tapped pane.
+  //
+  // The move MUST be instant. A smooth scroll animates over ~300ms, but the
+  // isSyncingRef guard below is released after a single rAF (~16ms) — matching
+  // the instant sync handlers. With a smooth scroll the still-animating other
+  // pane keeps firing onScroll long after the guard clears, and those events
+  // re-enter handleBotScroll/handleTopScroll, which assign the TAPPED pane's
+  // scrollTop — so the tapped pane would bounce. Assigning scrollTop directly
+  // (instant) lands the whole move inside the single rAF the guard covers: the
+  // other pane settles before the guard releases, no late onScroll escapes, and
+  // the tapped pane is never written to on this path.
   useEffect(() => {
     if (!highlight) return
     const tappedIsTop = (highlight.lang === 'a' && !bLead) || (highlight.lang === 'b' && bLead)
-    const otherRef = tappedIsTop ? botParaRefs[highlight.paraIdx] : topParaRefs[highlight.paraIdx]
-    if (otherRef?.current) {
-      otherRef.current.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-    }
+    const tappedPane = tappedIsTop ? topPaneRef.current : botPaneRef.current
+    const otherPane = tappedIsTop ? botPaneRef.current : topPaneRef.current
+    const tappedParaRefs = tappedIsTop ? topParaRefs : botParaRefs
+    const otherParaRefs = tappedIsTop ? botParaRefs : topParaRefs
+    if (!tappedPane || !otherPane) return
+    // Anchor from the tapped paragraph's own top so the SAME paragraph aligns
+    // in the other pane, regardless of where the tapped pane happens to be
+    // scrolled. Fall back to the tapped pane's current scrollTop if the tapped
+    // paragraph element isn't measurable yet.
+    const tappedParaEl = tappedParaRefs[highlight.paraIdx]?.current
+    const anchorTop = tappedParaEl ? tappedParaEl.offsetTop : tappedPane.scrollTop
+    const srcOffsets = computeParaOffsets(tappedParaRefs)
+    const dstOffsets = computeParaOffsets(otherParaRefs)
+    const target = computeSyncScrollTop(anchorTop, srcOffsets, dstOffsets)
+    if (target === null) return
+    isSyncingRef.current = true
+    otherPane.scrollTop = target // instant — see the single-rAF guard note above
+    requestAnimationFrame(() => { isSyncingRef.current = false })
   }, [highlight, bLead, topParaRefs, botParaRefs])
 
   const handleRate = useCallback((verdict) => {
@@ -1736,8 +1800,8 @@ function DeleteConfirmModal({ entry, busy, onConfirm, onCancel }) {
 // degrades to FALLBACK_GROUPS / "Default only" — never blocks anything.
 // ---------------------------------------------------------------------------
 function SettingsSheet({ token, prefs, onSelectModel, onClose }) {
-  const currentProvider = normalizeGenProvider(prefs)
-  const currentModel = normalizeGenModel(prefs)
+  const storedProvider = normalizeGenProvider(prefs)
+  const storedModel = normalizeGenModel(prefs)
   // null = still loading; otherwise the provider groups (FALLBACK_GROUPS or the
   // stitched live list).
   const [providerGroups, setProviderGroups] = useState(null)
@@ -1769,9 +1833,30 @@ function SettingsSheet({ token, prefs, onSelectModel, onClose }) {
     return () => { cancelled = true }
   }, [token])
 
-  // "Default" = no provider + no model: generate.sh runs the claude CLI with
-  // no --model flag. Always selectable so the owner can revert.
-  const onDefault = currentProvider === DEFAULT_PROVIDER && !currentModel
+  // Self-heal the highlighted row against the LIVE model list. migrateGenPrefs
+  // anchors the stored selection to the hard-coded FALLBACK id; if the backend
+  // ever stops returning exactly that id, the stored gen_model is present in no
+  // loaded group and every row renders unselected. Once the groups load, if the
+  // stored model isn't in any of them, fall back to the stored provider's first
+  // available model (or, if that provider is gone too, the first group's first
+  // model) — purely a display choice for which row reads as "current"; the
+  // persisted prefs are untouched until the user actually taps a row. While the
+  // groups are still loading we keep the stored values so nothing flickers.
+  let currentProvider = storedProvider
+  let currentModel = storedModel
+  if (providerGroups !== null) {
+    const inSomeGroup = providerGroups.some(
+      (g) => g.key === storedProvider && g.models.some((m) => m.id === storedModel),
+    )
+    if (!inSomeGroup) {
+      const sameProvider = providerGroups.find((g) => g.key === storedProvider && g.models.length > 0)
+      const fallbackGroup = sameProvider || providerGroups.find((g) => g.models.length > 0)
+      if (fallbackGroup) {
+        currentProvider = fallbackGroup.key
+        currentModel = fallbackGroup.models[0].id
+      }
+    }
+  }
 
   return (
     <div className="tn-scrim" onClick={onClose} role="dialog" aria-modal="true" aria-label="Settings">
@@ -1789,19 +1874,6 @@ function SettingsSheet({ token, prefs, onSelectModel, onClose }) {
             </div>
           ) : (
             <div className="tn-model-list" role="radiogroup" aria-label="Story generation agent">
-              <button
-                type="button"
-                className={`tn-model-row${onDefault ? ' is-selected' : ''}`}
-                role="radio"
-                aria-checked={onDefault}
-                onClick={() => onSelectModel(DEFAULT_PROVIDER, DEFAULT_MODEL_ID)}
-              >
-                <div className="tn-model-row-main">
-                  <span className="tn-model-row-title">Default</span>
-                  <span className="tn-model-row-sub">Platform&apos;s current model</span>
-                </div>
-                {onDefault && <span className="tn-model-check" aria-hidden="true">✓</span>}
-              </button>
               {providerGroups.map((group) => {
                 const connected = !connectedProviders || connectedProviders.has(group.key)
                 return (
@@ -2348,8 +2420,9 @@ export default function App({ appId, token }) {
   const gen = useGeneration({ appId, token, onStoryReady: setIndex })
 
   // Selecting an agent persists immediately — there is no save button on the
-  // sheet. 'Default' (empty provider + empty model) removes both keys entirely
-  // so prefs written by this version stay readable as "no preference"
+  // sheet. The picker now only ever passes a concrete provider+model (the
+  // selectable "Default" row was removed); the empty-arg branches remain as a
+  // defensive clear so an empty selection still reads as "no preference"
   // everywhere. provider+model are written together so generate.sh can route
   // to the right CLI.
   const handleSelectModel = useCallback(async (provider, id) => {
@@ -2362,7 +2435,12 @@ export default function App({ appId, token }) {
     await savePrefs(appId, token, next)
   }, [appId, token, prefs])
 
-  // Load prefs + story index on mount.
+  // Load prefs + story index on mount. The "Default" generation row was removed
+  // from the picker, so a user who was sitting on it (empty/missing gen_model)
+  // would otherwise open Settings to NO selected row. migrateGenPrefs rewrites
+  // that one time to a concrete real model; we persist only when it actually
+  // changed (migrateGenPrefs returns the same reference when it didn't), so a
+  // user with a real model already chosen incurs no write.
   useEffect(() => {
     let cancelled = false
     ;(async () => {
@@ -2371,8 +2449,12 @@ export default function App({ appId, token }) {
         loadStoryIndex(appId, token),
       ])
       if (cancelled) return
-      setPrefs(loadedPrefs)
+      const migrated = migrateGenPrefs(loadedPrefs)
+      setPrefs(migrated)
       setIndex(entries)
+      if (migrated !== loadedPrefs) {
+        savePrefs(appId, token, migrated).catch(() => {})
+      }
     })()
     return () => { cancelled = true }
   }, [appId, token])
@@ -2399,8 +2481,8 @@ export default function App({ appId, token }) {
           <img
             src={`/api/apps/${appId}/icon?size=64`}
             alt=""
-            width={26}
-            height={26}
+            width={34}
+            height={34}
             className="tn-brand-icon"
             onError={(e) => {
               e.currentTarget.style.display = 'none'
@@ -2409,9 +2491,6 @@ export default function App({ appId, token }) {
             }}
           />
           <span className="tn-brand-fallback" style={{ display: 'none' }} aria-hidden="true">·</span>
-          {prefs.lang_a && prefs.lang_b && (
-            <span className="tn-subtitle">{prefs.lang_a} / {prefs.lang_b}</span>
-          )}
         </div>
         <div className="tn-header-right">
           <button
