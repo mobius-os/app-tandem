@@ -836,6 +836,19 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .tn-input:focus, .tn-select:focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 /* /mobius-ui:Input */
 
+/* Free-form prompt textarea — same visual language as .tn-input, taller and
+   resizable for a multi-sentence ask. */
+.tn-textarea {
+  display: block; width: 100%; box-sizing: border-box; min-height: 76px;
+  padding: 11px 12px; resize: vertical;
+  background: var(--surface); color: var(--text); border: 1px solid var(--border);
+  border-radius: 8px; outline: none; font-family: var(--font);
+  font-size: 16px; line-height: 1.5;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.tn-textarea::placeholder { color: var(--muted); }
+.tn-textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+
 /* mobius-ui:Sheet v1 — keep in sync; library candidate. Diverge below the marker only. */
 .tn-scrim {
   position: absolute; inset: 0; z-index: 100;
@@ -1738,34 +1751,37 @@ function StoryReader({ story, onClose, onRate }) {
 }
 
 // ---------------------------------------------------------------------------
-// GenerateSheet — bottom sheet for choosing story topic + mode before generating.
+// GenerateSheet — bottom sheet for the ONE free-form prompt + languages/level.
+// The prompt replaces the old Topic + Series/storyline + genre split (v0.10):
+// the reader types a single natural-language ask and the generation agent
+// interprets it (fresh story, or continue/sequel an existing one — loading the
+// relevant stories from the library itself). `recentTitle` is the newest
+// story's title, used to pre-write a "Continue ‘…’" example chip.
 // ---------------------------------------------------------------------------
-function GenerateSheet({ onGenerate, onCancel, initialLangA, initialLangB, initialLevel, initialStoryline }) {
-  const [topicInput, setTopicInput] = useState('')
-  // Storyline persists across generations (unlike topic), so pre-fill it from
-  // the saved pref and let the reader edit or clear it.
-  const [storylineInput, setStorylineInput] = useState(initialStoryline || '')
-  const [selectedMode, setSelectedMode] = useState(null)
+function GenerateSheet({ onGenerate, onCancel, initialLangA, initialLangB, initialLevel, recentTitle }) {
+  const [promptInput, setPromptInput] = useState('')
   const [langA, setLangA] = useState(initialLangA || 'English')
   const [langB, setLangB] = useState(initialLangB || '')
   const [level, setLevel] = useState(CEFR_LEVELS.includes(initialLevel) ? initialLevel : 'B1')
 
-  const CHIPS = [
-    { label: 'Surprise me', mode: 'free' },
-    { label: 'A classic tale', mode: 'classic' },
-    { label: 'Daily life', mode: 'daily_life' },
-    { label: 'Travel', mode: 'travel' },
+  // Example chips PRE-FILL the prompt (they are not exclusive modes). The first
+  // continues the most recent story when there is one; the rest seed common
+  // fresh-story asks. Tapping a chip drops its text into the textarea so the
+  // reader can edit it before generating.
+  const EXAMPLE_CHIPS = [
+    ...(recentTitle ? [{ label: `Continue “${recentTitle}”`, text: `Continue the story “${recentTitle}”` }] : []),
+    { label: 'A classic fable', text: 'A classic fable in the style of Aesop' },
+    { label: 'A sci-fi mystery', text: 'A sci-fi mystery' },
+    { label: 'Something funny', text: 'Something light and funny set in everyday life' },
   ]
 
-  const handleChip = (mode) => {
-    setSelectedMode((prev) => prev === mode ? null : mode)
+  const handleChip = (text) => {
+    setPromptInput(text)
   }
 
   const handleGenerate = () => {
     onGenerate({
-      topic: topicInput.trim(),
-      storyline: storylineInput.trim(),
-      mode: selectedMode || 'free',
+      prompt: promptInput.trim(),
       lang_a: langA.trim() || (initialLangA || 'English'),
       lang_b: langB.trim() || (initialLangB || ''),
       level,
@@ -1815,39 +1831,25 @@ function GenerateSheet({ onGenerate, onCancel, initialLangA, initialLangB, initi
           </select>
         </div>
         <div>
-          <label className="tn-setup-label" htmlFor="tn-gen-topic">Topic (optional, this story only)</label>
-          <input
-            id="tn-gen-topic"
-            className="tn-input"
-            value={topicInput}
-            onChange={(e) => setTopicInput(e.target.value)}
-            placeholder="e.g. a street musician in Tokyo, friendship, a rainy day"
-            autoComplete="off"
-          />
-        </div>
-        <div>
-          <label className="tn-setup-label" htmlFor="tn-gen-storyline">Series / storyline (optional)</label>
-          <input
-            id="tn-gen-storyline"
-            className="tn-input"
-            value={storylineInput}
-            onChange={(e) => setStorylineInput(e.target.value)}
-            placeholder="continue the adventures of Mira the cartographer; a sci-fi mystery serial"
-            autoComplete="off"
+          <label className="tn-setup-label" htmlFor="tn-gen-prompt">What story would you like? (optional)</label>
+          <textarea
+            id="tn-gen-prompt"
+            className="tn-textarea"
+            value={promptInput}
+            onChange={(e) => setPromptInput(e.target.value)}
+            placeholder="e.g. a sci-fi mystery in a floating city — or continue an earlier story: “continue the cartographer story, but darker”"
+            rows={3}
           />
           <p className="tn-setup-note" style={{ margin: '6px 0 0' }}>
-            Persists across every story you generate (unlike Topic). Each story continues the same characters and arc. Clear it to go back to standalone stories.
+            Describe a fresh story, or ask to continue one you already have (by title or character). Leave blank to be surprised.
           </p>
-        </div>
-        <div>
-          <div className="tn-setup-label" style={{ marginBottom: 0 }}>Genre</div>
           <div className="tn-chips">
-            {CHIPS.map(({ label, mode }) => (
+            {EXAMPLE_CHIPS.map(({ label, text }) => (
               <button
-                key={mode}
+                key={label}
                 type="button"
-                className={`tn-chip${selectedMode === mode ? ' is-active' : ''}`}
-                onClick={() => handleChip(mode)}
+                className="tn-chip"
+                onClick={() => handleChip(text)}
               >
                 {label}
               </button>
@@ -2138,38 +2140,35 @@ function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, onIndex
     await handleRate(story, verdict)
   }, [stories, appId, token, handleRate, flashError])
 
-  const handleSheetGenerate = useCallback(async ({ topic, storyline, mode, lang_a, lang_b, level }) => {
+  const handleSheetGenerate = useCallback(async ({ prompt, lang_a, lang_b, level }) => {
     setShowGenerateSheet(false)
-    // Persist choices back to prefs so the next sheet opens with the same
-    // defaults, and save next_request so generate.sh picks them up. The
-    // generation model rides along in next_request so the per-run record is
-    // self-contained (a settings change mid-run won't retro-affect a retry);
-    // generate.sh also falls back to prefs.gen_model for runs that have no
-    // next_request (e.g. scheduled ones).
+    // Persist language/level back to prefs so the next sheet opens with the same
+    // defaults, and save next_request so generate.sh picks it up. The free-form
+    // prompt is PER-RUN by design: it lives only inside next_request, which
+    // generate.sh wipes after the run, so the next generation starts blank
+    // (there is no persistent storyline to manage any more). The generation
+    // model rides along in next_request so the per-run record is self-contained
+    // (a settings change mid-run won't retro-affect a retry); generate.sh also
+    // falls back to prefs.gen_model for runs that have no next_request (e.g.
+    // scheduled ones).
     const updatedLangA = lang_a || prefs.lang_a
     const updatedLangB = lang_b || prefs.lang_b
     const updatedLevel = CEFR_LEVELS.includes(level) ? level : (prefs.level || 'B1')
     const genProvider = normalizeGenProvider(prefs)
     const genModel = normalizeGenModel(prefs)
-    // Storyline is PERSISTENT — it lives at prefs.storyline (set below, outside
-    // next_request) so generate.sh's post-run next_request wipe never clears it.
-    // It also rides inside next_request for per-run record/retry symmetry.
-    const storylineVal = (storyline || '').trim()
+    const promptVal = (prompt || '').trim()
     const params = {
-      topic,
-      mode,
       lang_a: updatedLangA,
       lang_b: updatedLangB,
+      ...(promptVal ? { prompt: promptVal } : {}),
       ...(genProvider ? { provider: genProvider } : {}),
       ...(genModel ? { model: genModel } : {}),
-      ...(storylineVal ? { storyline: storylineVal } : {}),
     }
     const next = {
       ...prefs,
       lang_a: updatedLangA,
       lang_b: updatedLangB,
       level: updatedLevel,
-      storyline: storylineVal,
       next_request: params,
     }
     onPrefsChange(next)
@@ -2210,18 +2209,17 @@ function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, onIndex
     // Restore next_request — generate.sh clears it after each run, so a
     // retry without this would fall back to the prefs defaults.
     if (params.lang_a && params.lang_b) {
-      // `...prefs` already preserves the persistent prefs.storyline; mirror it
-      // into next_request too so the per-run record stays self-contained.
+      // Rebuild next_request from the same per-run params (generate.sh cleared
+      // it after the failed run). The free-form prompt is carried verbatim so
+      // the retry asks for exactly what the reader asked for.
       const next = {
         ...prefs,
         next_request: {
-          topic: params.topic || '',
-          mode: params.mode || 'free',
           lang_a: params.lang_a,
           lang_b: params.lang_b,
+          ...(params.prompt ? { prompt: params.prompt } : {}),
           ...(params.provider ? { provider: params.provider } : {}),
           ...(params.model ? { model: params.model } : {}),
-          ...(params.storyline ? { storyline: params.storyline } : {}),
         },
       }
       onPrefsChange(next)
@@ -2390,7 +2388,7 @@ function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, onIndex
           initialLangA={prefs.lang_a}
           initialLangB={prefs.lang_b}
           initialLevel={prefs.level}
-          initialStoryline={prefs.storyline}
+          recentTitle={(index && index[0] && index[0].title_a) || ''}
         />
       )}
 

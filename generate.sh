@@ -7,20 +7,25 @@
 #
 # What it does:
 #   1. Loads the service token and reads prefs.json (target language, base language,
-#      CEFR level, topic, mode, generation model). Applies feedback_history to adapt
-#      the requested level.
-#   2a. Fetches recent story titles to avoid repeats.
+#      CEFR level, the free-form generation prompt, generation model). Applies
+#      feedback_history to adapt the requested level.
+#   2a. Builds a metadata INDEX of every existing story (id, titles, languages,
+#      level, summary) — bounded to one line each, so it scales with the library.
 #   2b. Reads system-prompt.md (baked schema, role + output format) and appends the
-#      generation parameters as a trailing section.
-#   3. Runs the chosen provider's CLI with NO tools — output is pure JSON from the
-#      model's reasoning alone. No web search; stories are fictional. The provider
-#      (claude | codex) and model come from next_request, falling back to
+#      generation parameters, the reader's free-form request, and the library
+#      index as a trailing section.
+#   3. Runs the chosen provider's CLI. claude runs with a Read tool SCOPED to the
+#      stories directory (--add-dir) so the agent can load the full text of the
+#      specific stories the request names ("continue X") before continuing them;
+#      only Read is allowed (no Write/Bash/network). codex runs in a read-only
+#      sandbox with no /data read and works from the index metadata alone. The
+#      provider (claude | codex) and model come from next_request, falling back to
 #      prefs.gen_provider / prefs.gen_model; the model is passed via --model. A
 #      failed custom-model run retries once on the same provider's default model.
-#      claude → `claude -p`; codex → `codex exec --json --sandbox read-only`.
+#      claude → `claude -p --allowedTools Read`; codex → `codex exec --json --sandbox read-only`.
 #   4. Extracts the JSON story object from stdout and validates it minimally.
 #   5. Writes stories/<id>.json and updates stories/index.json.
-#   6. Clears next_request from prefs so the next generation reverts to free mode.
+#   6. Clears next_request from prefs so the next generation starts with no prompt.
 #   7. Sends a push notification on success.
 #   8. Logs to /data/cron-logs/tandem.log
 
@@ -39,6 +44,10 @@ case "$APP_ID" in
 esac
 
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
+# Root of the per-app on-disk storage tree the storage API serves. The Read
+# tool (claude provider) opens story files directly off this path; overridable
+# for tests / non-default deployments.
+DATA_DIR="${DATA_DIR:-/data}"
 NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 LOG_DIR=/data/cron-logs
 LOG_FILE="$LOG_DIR/tandem.log"
@@ -81,15 +90,17 @@ if [ "$SYS_CODE" != "200" ]; then
   exit 1
 fi
 
-# 2. Read prefs.json for language pair, level, feedback history, topic, mode.
+# 2. Read prefs.json for language pair, level, feedback history, free-form prompt.
 PREFS_FILE="$WORK_DIR/prefs.json"
 PREFS_CODE=$(curl -sS -o "$PREFS_FILE" -w "%{http_code}" \
   -H "Authorization: Bearer $SERVICE_TOKEN" \
   "$API_BASE_URL/api/storage/apps/$APP_ID/prefs.json") || PREFS_CODE=000
 
 # Parse prefs; fall back to English/Spanish B1 defaults.
-# Output tab-separated fields: lang_a, lang_b, level, topic, mode, ratings,
-# provider, model, storyline.
+# Output tab-separated fields (one per line via a NUL-safe scheme would be
+# overkill; the free-form prompt is the only field that can contain arbitrary
+# text, so it goes LAST and we read it with the-rest-of-line semantics):
+#   lang_a, lang_b, level, ratings, provider, model, prompt.
 PARAMS=$(python3 - "$PREFS_FILE" "$PREFS_CODE" <<'PY'
 import json
 import re
@@ -144,25 +155,32 @@ if isinstance(history, list):
     elif score < 0:
         level = CEFR[max(idx - 1, 0)]
 
-# Read topic, mode, and optional language override from next_request if present.
+# Read the single free-form prompt and optional language override from
+# next_request if present. The prompt REPLACES the old topic + storyline +
+# mode split (v0.10): the reader types one natural-language ask ("a sci-fi
+# mystery in French", "continue the cartographer story but darker") and the
+# generation agent loads whatever existing stories it judges relevant. It is
+# per-run by design — it lives ONLY inside next_request, so the post-run wipe
+# clears it and the next free generation starts blank. Old prefs that still
+# carry a legacy top-level `storyline` or a next_request `topic`/`storyline`
+# fold into the prompt (lenient migration) so a mid-upgrade run is not silently
+# dropped. Collapse internal whitespace so an embedded newline can not inject
+# extra prompt lines downstream.
 next_req = prefs.get("next_request") or {}
 if not isinstance(next_req, dict):
     next_req = {}
-topic = (next_req.get("topic") or "").strip()
-mode = (next_req.get("mode") or "free").strip()
-# Storyline is a PERSISTENT pref (it survives the post-run next_request wipe),
-# so it reads from prefs first. A per-run next_request.storyline (written for
-# retry symmetry) overrides it, mirroring the topic/model precedence pattern.
-# Lenient: old prefs without a storyline fall through to "".
-storyline = prefs.get("storyline")
-if not isinstance(storyline, str):
-    storyline = ""
-nr_storyline = next_req.get("storyline")
-if isinstance(nr_storyline, str) and nr_storyline.strip():
-    storyline = nr_storyline
-storyline = " ".join(storyline.split())
-if mode not in ("free", "classic", "daily_life", "travel"):
-    mode = "free"
+prompt = next_req.get("prompt")
+if not isinstance(prompt, str):
+    prompt = ""
+prompt = prompt.strip()
+if not prompt:
+    # Lenient migration from the pre-0.10 split fields, newest wins.
+    legacy_bits = []
+    for src in (next_req.get("topic"), next_req.get("storyline"), prefs.get("storyline")):
+        if isinstance(src, str) and src.strip():
+            legacy_bits.append(src.strip())
+    prompt = " ".join(legacy_bits)
+prompt = " ".join(prompt.split())
 # Allow per-generate language override (from the generate sheet)
 req_lang_a = (next_req.get("lang_a") or "").strip()
 req_lang_b = (next_req.get("lang_b") or "").strip()
@@ -195,7 +213,10 @@ if model and not re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", model):
 if provider not in ("claude", "codex"):
     provider = "claude" if model else ""
 
-print(f"{lang_a}\t{lang_b}\t{level}\t{topic}\t{mode}\t{ratings}\t{provider}\t{model}\t{storyline}")
+# prompt goes LAST: it is the only field that may carry arbitrary user text,
+# and we read it with the-rest-of-line semantics in the shell so a stray tab
+# inside it can not shift the earlier positional fields.
+print(f"{lang_a}\t{lang_b}\t{level}\t{ratings}\t{provider}\t{model}\t{prompt}")
 PY
 )
 LANG_A="${PARAMS%%$'\t'*}"
@@ -204,56 +225,69 @@ LANG_B="${REST1%%$'\t'*}"
 REST2="${REST1#*$'\t'}"
 LEVEL="${REST2%%$'\t'*}"
 REST3="${REST2#*$'\t'}"
-TOPIC="${REST3%%$'\t'*}"
+RATINGS="${REST3%%$'\t'*}"
 REST4="${REST3#*$'\t'}"
-MODE="${REST4%%$'\t'*}"
+GEN_PROVIDER="${REST4%%$'\t'*}"
 REST5="${REST4#*$'\t'}"
-RATINGS="${REST5%%$'\t'*}"
-REST6="${REST5#*$'\t'}"
-GEN_PROVIDER="${REST6%%$'\t'*}"
-REST7="${REST6#*$'\t'}"
-GEN_MODEL="${REST7%%$'\t'*}"
-STORYLINE="${REST7#*$'\t'}"
-log "Generating level=$LEVEL mode=$MODE provider=${GEN_PROVIDER:-claude} model=${GEN_MODEL:-default} storyline=${STORYLINE:-(none)} story: $LANG_A / $LANG_B (recent ratings: $RATINGS)"
+GEN_MODEL="${REST5%%$'\t'*}"
+# PROMPT is the rest-of-line: read with #* (strip up to the first tab) so an
+# embedded tab inside it (already collapsed in python, but belt-and-braces)
+# can not truncate it.
+PROMPT_TEXT="${REST5#*$'\t'}"
+log "Generating level=$LEVEL provider=${GEN_PROVIDER:-claude} model=${GEN_MODEL:-default} prompt=${PROMPT_TEXT:-(none)} story: $LANG_A / $LANG_B (recent ratings: $RATINGS)"
 
-# 2b. Fetch recent stories (title + premise summary) to avoid repeating not
-# just titles but PREMISES. When a storyline is set, the newest entry's summary
-# also feeds the "Previously in this series" continuity line below — both come
-# from this single index read (no extra I/O).
-RECENT_TITLES="(none yet)"
-PREV_SUMMARY=""
+# 2b. Build a metadata INDEX of EVERY existing story (id, both titles,
+# languages, level, one-line summary) — not just the 5/10 most recent. This is
+# what lets the free-form prompt work: the generation agent sees the whole
+# library as metadata and decides which (if any) stories are relevant to the
+# reader's ask ("continue X", "a sequel to Y"). It then loads the FULL text of
+# only those stories via the Read tool (claude provider) — the index stays
+# bounded (one line per story) while the heavyweight full text is pulled on
+# demand, so the context cost does not grow with the library.
+#
+# The index entry carries the story id so the agent can map a title in the
+# prompt to the on-disk file <id>.json. Stories are read off the SAME on-disk
+# directory the storage API serves (/data/apps/<APP_ID>/stories): the run-job
+# runner executes generate.sh as the mobius user with read access to /data,
+# so the Read tool can open <id>.json directly (verified: claude --allowedTools
+# Read --add-dir <dir> opens these files non-interactively).
+STORIES_DIR="${DATA_DIR:-/data}/apps/$APP_ID/stories"
+STORIES_INDEX="(no stories yet)"
 INDEX_EARLY_FILE="$WORK_DIR/index-early.json"
 EARLY_CODE=$(curl -sS -o "$INDEX_EARLY_FILE" -w "%{http_code}" \
   -H "Authorization: Bearer $SERVICE_TOKEN" \
   "$API_BASE_URL/api/storage/apps/$APP_ID/stories/index.json") || EARLY_CODE=000
 if [ "$EARLY_CODE" = "200" ]; then
-  # Emit two tab-separated fields: the recent-stories block, then the newest
-  # story's summary (for series continuity). The index is newest-first.
-  RECENT_PARSED=$(python3 -c '
+  STORIES_INDEX=$(python3 -c '
 import json, sys
 try:
     idx = json.load(open(sys.argv[1], encoding="utf-8"))
     entries = [e for e in (idx if isinstance(idx, list) else []) if isinstance(e, dict) and e.get("title_a")]
     lines = []
-    for e in entries[:10]:
-        # Collapse internal whitespace: a stored title/summary with an embedded
-        # newline would otherwise inject extra prompt lines and break structure.
-        title = " ".join(str(e.get("title_a", "")).split())
+    for e in entries:
+        # Collapse internal whitespace so a stored title/summary with an
+        # embedded newline can not inject extra index lines and break structure.
+        sid = " ".join(str(e.get("id", "")).split())
+        title_a = " ".join(str(e.get("title_a", "")).split())
+        title_b = " ".join(str(e.get("title_b", "")).split())
+        la = " ".join(str(e.get("lang_a", "")).split())
+        lb = " ".join(str(e.get("lang_b", "")).split())
+        lvl = " ".join(str(e.get("level", "")).split())
         summary = " ".join(str(e.get("summary", "")).split())
-        # Stories written before summaries existed contribute a title-only line.
-        lines.append(f"- {title} — {summary}" if summary else f"- {title}")
-    prev_summary = " ".join(str(entries[0].get("summary", "")).split()) if entries else ""
-    block = "\n".join(lines) or "(none yet)"
-    # Tab-separate the (possibly multi-line) block from the single-line summary.
-    print(block + "\t" + prev_summary)
+        meta = f"[{la}/{lb} {lvl}]" if (la or lb or lvl) else ""
+        head = f"- id={sid} | {title_a} / {title_b} {meta}".rstrip()
+        lines.append(f"{head}\n    {summary}" if summary else head)
+    print("\n".join(lines) or "(no stories yet)")
 except Exception:
-    print("(none yet)\t")
+    print("(no stories yet)")
 ' "$INDEX_EARLY_FILE")
-  RECENT_TITLES="${RECENT_PARSED%$'\t'*}"
-  PREV_SUMMARY="${RECENT_PARSED##*$'\t'}"
 fi
 
-# 3. Build the combined prompt file (system prompt + generation parameters).
+# 3. Build the combined prompt file (system prompt + generation parameters +
+# the reader's free-form request + the full library index). The agent reads
+# the index, decides which existing stories (if any) the request refers to,
+# loads their full text via the Read tool when relevant, then writes the new
+# story.
 PROMPT_FILE="$WORK_DIR/prompt.md"
 {
   cat "$SYSTEM_FILE"
@@ -261,19 +295,30 @@ PROMPT_FILE="$WORK_DIR/prompt.md"
   printf 'Base language (lang_a): %s\n' "$LANG_A"
   printf 'Target language (lang_b): %s\n' "$LANG_B"
   printf 'CEFR level: %s\n' "$LEVEL"
-  printf 'Mode: %s   (one of: free | classic | daily_life | travel)\n' "$MODE"
-  printf 'Topic: %s  (empty = no constraint; non-empty = use this as the story'"'"'s theme/setting)\n' "$TOPIC"
-  printf 'Storyline / series (carry across stories): %s  (empty = standalone story; non-empty = honor the recurring characters/arc — see "Series continuity")\n' "$STORYLINE"
   printf 'Recent difficulty ratings from the reader (oldest first): %s\n' "$RATINGS"
   printf 'Steer within the CEFR level: ratings leaning "too hard" mean simpler sentences and more common vocabulary; "too easy" means richer structures and rarer words.\n'
-  printf '\nRecent stories to avoid repeating the PREMISES of (lang_a title — one-line summary):\n'
-  printf '%s\n' "$RECENT_TITLES"
-  # Series continuity bonus: when a storyline is set, surface the newest story's
-  # summary so the model can continue the arc. Reuses the step-2b index read.
-  if [ -n "$STORYLINE" ] && [ -n "$PREV_SUMMARY" ]; then
-    printf '\nPreviously in this series: %s\n' "$PREV_SUMMARY"
+  printf '\n## Reader request\n\n'
+  if [ -n "$PROMPT_TEXT" ]; then
+    printf 'The reader asked for: %s\n' "$PROMPT_TEXT"
+    printf 'Interpret this freely. If it names or describes an existing story (e.g. "continue X", "a sequel to Y", "more of the cartographer story"), find that story in the library index below, READ its full text first (see "Using the library"), and continue it coherently — same characters, world, and voice, a NEW incident. If it just describes a genre/theme/setting ("a sci-fi mystery in French", "something funny"), write a fresh standalone story in that vein. The base/target languages and level above are defaults; if the request explicitly asks for a different language or difficulty, honor the request.\n'
+  else
+    printf 'No specific request — write a fresh, original standalone story. Vary setting, genre, and mood from the recent library entries below; do not repeat a premise that already appears there.\n'
   fi
-  printf '\nGenerate a fresh story now. Output ONLY the JSON object described above.\n'
+  printf '\n## Library index (every existing story — metadata only)\n\n'
+  printf 'Each line is one existing story: its id, both titles, [languages level], and a one-line summary. This is METADATA only — do NOT assume you know a story'"'"'s full content from its summary.\n\n'
+  printf '%s\n' "$STORIES_INDEX"
+  printf '\n## Using the library\n\n'
+  if [ "$GEN_PROVIDER" = "codex" ]; then
+    # Codex runs in a read-only sandbox with NO filesystem read of /data, so it
+    # works from the index metadata alone. It can still continue a series from
+    # the summary, just without the full prior text — an acceptable, documented
+    # degradation; the default (claude) provider gets the full-text deep dive.
+    printf 'You are working from the metadata index above only (no file access). To continue a named story, rely on its summary and titles for continuity. Always write a NEW incident, never a retelling.\n'
+  else
+    printf 'You have a Read tool scoped to the stories directory: %s\n' "$STORIES_DIR"
+    printf 'When the reader request points at one or more existing stories, Read the relevant file(s) by id — the path is %s/<id>.json — BEFORE writing, so the continuation matches the established characters, plot, and tone. Read only the few stories that are actually relevant (do not read the whole library). If the request is a fresh standalone story, you may skip reading and just avoid repeating the premises listed above.\n' "$STORIES_DIR"
+  fi
+  printf '\nGenerate the story now. Output ONLY the JSON object described above.\n'
 } > "$PROMPT_FILE"
 
 # 4+5. Run the Claude CLI and extract + validate the JSON story.
@@ -288,12 +333,17 @@ PROMPT_FILE="$WORK_DIR/prompt.md"
 RAW_OUTPUT="$WORK_DIR/agent.out"
 STORY_FILE="$WORK_DIR/story.json"
 
-# Provider routing mirrors app-news/fetch.sh: claude runs `claude -p` with NO
-# tools (the story is pure-reasoning JSON), codex runs `codex exec --json` with
-# a read-only sandbox (no disk-write, no network — closes the prompt-injection
-# blast radius). Both pass --model only when one is set, so an empty model
-# falls back to the CLI's own default. The model id is passed verbatim; the
-# CLI is the authority on what resolves, and a rejected id degrades to the
+# Provider routing: claude runs `claude -p` with the Read tool ENABLED and
+# scoped to the stories directory (--add-dir), so the agent can load the full
+# text of whichever existing stories the free-form request points at before
+# continuing them. Only the Read tool is allowed — no Write, no Bash, no
+# network — so the worst a prompt-injection in a stored story could do is make
+# the agent read another already-owner-owned /data file; it can not write,
+# exfiltrate, or execute. Codex runs `codex exec --json` in a read-only sandbox
+# (no /data read at all): it works from the metadata index alone, a documented
+# degradation. Both pass --model only when one is set, so an empty model falls
+# back to the CLI's own default. The model id is passed verbatim; the CLI is
+# the authority on what resolves, and a rejected id degrades to the
 # default-model retry below.
 USER_TURN="Generate the bilingual story now. Output only the JSON object."
 
@@ -319,10 +369,20 @@ run_agent() {
     log "ERROR: provider=claude but claude CLI not installed"
     return 127
   fi
+  # Read tool ONLY, scoped to the stories directory. --add-dir grants the
+  # path; --allowedTools "Read" allows nothing else (no Write/Bash/network);
+  # --permission-mode dontAsk lets the scoped reads proceed in the headless
+  # -p run (there is no human to grant a prompt). max-turns is raised so the
+  # agent has room to Read one or two stories AND then write the JSON. The dir
+  # is created if absent (first-ever generation has no stories/ yet) so --add-dir
+  # never points at a missing path.
+  mkdir -p "$STORIES_DIR" 2>/dev/null || true
   local flags=(
     --system-prompt-file "$PROMPT_FILE"
-    --allowedTools ""
-    --max-turns 3
+    --allowedTools "Read"
+    --add-dir "$STORIES_DIR"
+    --permission-mode dontAsk
+    --max-turns 8
   )
   if [ -n "$1" ]; then
     flags+=( --model "$1" )
@@ -561,7 +621,7 @@ if [ "$IDX_PUT_CODE" != "200" ] && [ "$IDX_PUT_CODE" != "201" ] && [ "$IDX_PUT_C
   log "WARN: failed to update stories/index.json (HTTP $IDX_PUT_CODE)"
 fi
 
-# 7b. Clear next_request from prefs so the next generation reverts to free mode.
+# 7b. Clear next_request from prefs so the next generation starts with no prompt.
 CLEAR_PREFS_CODE=$(python3 - "$PREFS_FILE" "$PREFS_CODE" <<'PY' > "$WORK_DIR/prefs-cleared.json" 2>>"$LOG_FILE"
 import json
 import sys

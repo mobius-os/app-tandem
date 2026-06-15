@@ -6,7 +6,7 @@ Parallel bilingual stories for language learning. The Möbius agent generates a 
 
 ## What it does
 
-1. First run asks for your base language, target language, and CEFR level — after that, every generation is configured directly in the **Generate story** sheet (languages, level, topic, genre; all remembered). The gear in the header opens the one settings surface: the **story generation model**, listed from the platform's model registry (`GET /api/models`; Claude models only, since generation runs the Claude CLI). "Default" follows the platform's current model. The choice persists as `prefs.gen_model`; a failed registry fetch degrades to a Default-only list and never blocks generation.
+1. First run asks for your base language, target language, and CEFR level. After that, every generation is configured in the **Generate story** sheet: languages, level (remembered), and ONE free-form prompt. Type whatever you want — "a sci-fi mystery in French", "a classic fable", or "continue the cartographer story, but darker". Leave it blank to be surprised. Example chips pre-fill common asks (including "Continue ‘<your most recent story>’"). The gear in the header opens the one settings surface: the **story generation agent** (Claude or OpenAI Codex), listed from the platform's model registry. "Default" follows the platform's current model. The choice persists as `prefs.gen_provider`/`prefs.gen_model`; a failed registry fetch degrades to a Default-only list and never blocks generation.
 2. Tap **Generate story** to have the agent write a fresh bilingual story, 14–20 paragraphs aligned pair-by-pair, with a per-paragraph glossary covering all non-trivial content words. Generation survives navigation and even an app reload: a pending record (`generation-pending.json`) is persisted to storage and the root component resumes the poll.
 3. Read in the split-pane reader (drag the slim divider to resize; panes sync-scroll paragraph-by-paragraph; the pill swaps which language leads).
 4. Tap any word: the word gets a strong highlight, its sentence a soft one, and the OTHER pane highlights the aligned sentence (index-clamped) — plus the exact translated word when the story's glossary maps it. Tap the same word (or anywhere else) to clear. No bottom sheets.
@@ -28,19 +28,21 @@ Each paragraph: `{ a: string, b: string, glossary: [{word_a, word_b, note?}] }`.
 
 ## How generation works
 
+The free-form prompt drives everything. When it names or describes an existing story ("continue X", "a sequel to Y"), the generation agent finds that story in a metadata index of the WHOLE library, loads its full text, and continues it coherently. When it describes a fresh story, the agent writes a new one in that vein. The reader never manages a separate "series" field.
+
 Generation is triggered by `POST /api/apps/<id>/run-job`, which runs `generate.sh <APP_ID>`:
 
-1. Reads `prefs.json` for the language pair, CEFR level, topic/mode/model (`next_request`, with `prefs.gen_model` as the model fallback for runs that have no per-run record), and feedback history.
+1. Reads `prefs.json` for the language pair, CEFR level, the free-form prompt and model (`next_request`, with `prefs.gen_model` as the model fallback for runs that have no per-run record), and feedback history. The prompt is per-run: it lives only inside `next_request`, which is cleared after each run.
 2. Applies the feedback history to the level (too-easy ratings push it up; too-hard push it down — last 3 entries), and passes the recent ratings into the prompt so the model steers difficulty within the level.
 3. Composes `system-prompt.md` (baked schema; 14–20 paragraph pairs; glossary covering all non-trivial content words verbatim) with the generation parameters.
-4. Runs the Claude CLI with NO tools — stories are fictional, no web search needed. `--max-turns 3`. The chosen model is passed via `--model` (sanitized to model-id characters first); Default means no flag. A failed custom-model run — nonzero exit OR no extractable story (the CLI exits 0 with an error sentence on unknown model ids) — retries once on the platform default, so a retired model id degrades to a default-model story instead of a hard failure.
+4. Builds a metadata INDEX of every existing story (id, both titles, languages, level, one-line summary) — bounded to one line each, so the prompt scales with the library — and appends it plus the reader's free-form request to the system prompt. Then runs the Claude CLI with a **Read tool scoped to the stories directory** (`--allowedTools "Read" --add-dir /data/apps/<id>/stories`): the agent loads the full text of whichever stories the request points at before writing, so a "continue X" stays coherent. Only Read is allowed — no Write, Bash, or network. (Codex runs in a read-only sandbox with no file access and works from the index metadata alone.) `--max-turns 8` leaves room to read one or two stories and then write. The chosen model is passed via `--model` (sanitized first); Default means no flag. A failed custom-model run — nonzero exit OR no extractable story — retries once on the provider default, so a retired model id degrades to a default-model story instead of a hard failure.
 5. Extracts and validates the JSON story object from stdout.
 6. Writes `stories/<id>.json` and updates `stories/index.json`.
 7. Sends a push notification.
 
 The frontend never owns the run: it persists `generation-pending.json` (params + `known_ids` snapshot), POSTs run-job, and polls the index from the root component. The poll detects the new story by diffing against `known_ids`, then clears the pending record. Failures surface, they don't spin: if `generate.sh` drops a `generation-failed.json` marker (`{ message }`) the poll reads it and shows the body verbatim; otherwise a run that outlives the ~6-minute timeout with no story is shown as a rate-limit-flavoured error. Either way the UI lands on a "Generation failed" card with Retry / Dismiss instead of an open-ended spinner.
 
-Security model: the service token is held by `generate.sh` and never exposed to the model. The model only produces a JSON story; the shell script does the PUT.
+Security model: the service token is held by `generate.sh` and never exposed to the model. The model can READ existing story files (Read tool, scoped to the stories dir) but cannot write, run commands, or reach the network; it only produces a JSON story, and the shell script does the PUT.
 
 ## Pure helper modules
 
