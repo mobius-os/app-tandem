@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { computeSyncScrollTop, computeParaOffsets, computeProportionalScrollTop } from '../scroll-sync.mjs'
+import { computeSyncScrollTop, computeParaOffsets, computeProportionalScrollTop, clampScrollTargetToView } from '../scroll-sync.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 
@@ -34,6 +34,10 @@ test('inlined scroll-sync helpers in index.jsx stay in sync with scroll-sync.mjs
     'if (driverMax <= 0 || followerMax <= 0) return null',
     'const ratio = Math.min(1, Math.max(0, driver.scrollTop / driverMax))',
     'return ratio * followerMax',
+    // clampScrollTargetToView (v0.9.1 comfortable-in-view padding for word taps)
+    'const maxScroll = Math.max(0, scrollHeight - clientHeight)',
+    'const padded = rawTarget - clientHeight * margin',
+    'return Math.min(maxScroll, Math.max(0, padded))',
   ]
   for (const snippet of distinctive) {
     assert.ok(
@@ -196,3 +200,82 @@ test('computeParaOffsets uses 1 as minimum height when offsetHeight is 0', () =>
   const result = computeParaOffsets(refs)
   assert.deepEqual(result, [{ top: 0, height: 1 }])
 })
+
+// ---------------------------------------------------------------------------
+// clampScrollTargetToView — comfortable, on-screen word-tap landing (v0.9.1)
+//
+// Models the word-tap fix end-to-end: with .tn-pane now position:relative,
+// each pane is the offsetParent of its own paragraphs, so computeSyncScrollTop
+// returns a PANE-RELATIVE aligned scrollTop for BOTH tap directions. The clamp
+// then pads it off the top edge and keeps it inside the scrollable range so the
+// matched paragraph is comfortably visible whichever pane was tapped.
+//
+// Helper for the assertions below: given the aligned paragraph's pane-relative
+// top + its height, the final pane scrollTop, and the viewport height, is the
+// paragraph (or at least its top) inside the viewport?
+// ---------------------------------------------------------------------------
+function paraVisible(paraTop, paraHeight, scrollTop, clientHeight) {
+  // The paragraph's top must sit within the viewport [scrollTop, scrollTop+clientHeight].
+  return paraTop >= scrollTop && paraTop < scrollTop + clientHeight
+}
+
+test('clampScrollTargetToView pads the target down off the top edge', () => {
+  // aligned target 1000 in a 400px-tall pane, default margin 0.25 → pull up 100
+  const out = clampScrollTargetToView(1000, 400, 5000)
+  assert.equal(out, 900) // 1000 - 400*0.25, well within [0, 5000-400]
+})
+
+test('clampScrollTargetToView clamps a near-start match to 0 (no negative scroll)', () => {
+  // aligned 30; padding would go negative → clamp to 0
+  const out = clampScrollTargetToView(30, 400, 5000)
+  assert.equal(out, 0)
+})
+
+test('clampScrollTargetToView clamps a near-end match to maxScroll (no overscroll)', () => {
+  // maxScroll = 5000-400 = 4600; aligned 4900 - 100 = 4800 > 4600 → clamp to 4600
+  const out = clampScrollTargetToView(4900, 400, 5000)
+  assert.equal(out, 4600)
+})
+
+test('clampScrollTargetToView returns null on missing/non-finite measurements', () => {
+  assert.equal(clampScrollTargetToView(null, 400, 5000), null)
+  assert.equal(clampScrollTargetToView(NaN, 400, 5000), null)
+  assert.equal(clampScrollTargetToView(100, NaN, 5000), null)
+  assert.equal(clampScrollTargetToView(100, 400, NaN), null)
+})
+
+test('word-tap landing keeps the match on-screen for BOTH directions (the asymmetry fix)', () => {
+  // Two panes, pane-relative offsets (the position:relative fix guarantees this).
+  // TOP pane: 6 paras of 200px each (clientHeight 400, scrollHeight 1200).
+  // BOTTOM pane: 6 paras of 350px each (clientHeight 350, scrollHeight 2100).
+  const topOffsets = Array.from({ length: 6 }, (_, i) => ({ top: i * 200, height: 200 }))
+  const botOffsets = Array.from({ length: 6 }, (_, i) => ({ top: i * 350, height: 350 }))
+  const TOP = { clientHeight: 400, scrollHeight: 1200 }
+  const BOT = { clientHeight: 350, scrollHeight: 2100 }
+
+  for (const tappedIdx of [0, 3, 5]) {
+    // --- TOP-tap → land the BOTTOM pane (the direction the owner saw fail) ---
+    {
+      const anchorTop = topOffsets[tappedIdx].top // tapped para's pane-relative top
+      const aligned = computeSyncScrollTop(anchorTop, topOffsets, botOffsets)
+      const scrollTop = clampScrollTargetToView(aligned, BOT.clientHeight, BOT.scrollHeight)
+      const match = botOffsets[tappedIdx]
+      assert.ok(
+        paraVisible(match.top, match.height, scrollTop, BOT.clientHeight),
+        `TOP-tap para ${tappedIdx}: bottom match top ${match.top} not in [${scrollTop}, ${scrollTop + BOT.clientHeight})`,
+      )
+    }
+    // --- BOTTOM-tap → land the TOP pane (the direction that already worked) ---
+    {
+      const anchorTop = botOffsets[tappedIdx].top
+      const aligned = computeSyncScrollTop(anchorTop, botOffsets, topOffsets)
+      const scrollTop = clampScrollTargetToView(aligned, TOP.clientHeight, TOP.scrollHeight)
+      const match = topOffsets[tappedIdx]
+      assert.ok(
+        paraVisible(match.top, match.height, scrollTop, TOP.clientHeight),
+        `BOTTOM-tap para ${tappedIdx}: top match top ${match.top} not in [${scrollTop}, ${scrollTop + TOP.clientHeight})`,
+      )
+    }
+  }
+})
+

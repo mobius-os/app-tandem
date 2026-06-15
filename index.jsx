@@ -1013,6 +1013,16 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
   overscroll-behavior: contain;
   padding: 0 0 32px;
   min-height: 0;
+  /* The word-tap sync sets pane.scrollTop to a paragraph's offsetTop
+     (computeParaOffsets + the highlight effect). offsetTop is measured
+     from the nearest POSITIONED ancestor, so each pane MUST be that
+     ancestor. Without this, both panes' paragraphs resolve against
+     .tn-reader-body and the BOTTOM pane's offsets are inflated by the
+     top pane's height, so a top-pane tap scrolls the bottom follower
+     PAST the matching paragraph (out of view), while a bottom-pane tap
+     works because the top pane is first in flow. position relative
+     makes offsetTop pane-relative, fixing the asymmetry for both. */
+  position: relative;
 }
 .tn-pane::-webkit-scrollbar { width: 9px; height: 9px; }
 .tn-pane::-webkit-scrollbar-thumb {
@@ -1066,14 +1076,18 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
   margin: 0; line-height: 1.4;
 }
 
-/* Paragraphs in each pane */
+/* Paragraphs in each pane — continuous prose, like a normal story:
+   no divider lines or boxed blocks, just standard paragraph spacing.
+   The .tn-para wrapper stays as the per-paragraph anchor the word-tap
+   sync measures (offsetTop); only its visual separation is dropped. */
 .tn-para {
-  padding: 12px 18px 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+  padding: 0 18px;
 }
-.tn-para:last-of-type { border-bottom: none; }
+.tn-para:first-of-type {
+  padding-top: 14px;
+}
 .tn-para-text {
-  font-size: 15px; line-height: 1.72; margin: 0 0 12px;
+  font-size: 15px; line-height: 1.72; margin: 0 0 1em;
   color: var(--text);
 }
 
@@ -1365,6 +1379,18 @@ function computeProportionalScrollTop(driver, follower) {
   return ratio * followerMax
 }
 
+// Pad a raw word-tap target so the matched paragraph lands COMFORTABLY in view
+// (≈margin of the way down, default a quarter), not flush against the top edge.
+// Clamped to [0, scrollHeight - clientHeight] so matches near the start/end stay
+// on-screen at either extreme. Canonical + tested in scroll-sync.mjs.
+function clampScrollTargetToView(rawTarget, clientHeight, scrollHeight, margin = 0.25) {
+  if (rawTarget == null || !Number.isFinite(rawTarget)) return null
+  if (!Number.isFinite(clientHeight) || !Number.isFinite(scrollHeight)) return null
+  const maxScroll = Math.max(0, scrollHeight - clientHeight)
+  const padded = rawTarget - clientHeight * margin
+  return Math.min(maxScroll, Math.max(0, padded))
+}
+
 function StoryReader({ story, onClose, onRate }) {
   const [bLead, setBLead] = useState(false)
   const [rating, setRating] = useState(story.rating || null)
@@ -1556,7 +1582,12 @@ function StoryReader({ story, onClose, onRate }) {
     const anchorTop = tappedParaEl ? tappedParaEl.offsetTop : tappedPane.scrollTop
     const srcOffsets = computeParaOffsets(tappedParaRefs)
     const dstOffsets = computeParaOffsets(otherParaRefs)
-    const target = computeSyncScrollTop(anchorTop, srcOffsets, dstOffsets)
+    const aligned = computeSyncScrollTop(anchorTop, srcOffsets, dstOffsets)
+    if (aligned === null) return
+    // Pull the aligned paragraph down off the top edge into the comfortable
+    // top-third, clamped so a match near the story start/end can't overscroll.
+    // This is what makes both tap directions land the match ON-SCREEN.
+    const target = clampScrollTargetToView(aligned, otherPane.clientHeight, otherPane.scrollHeight)
     if (target === null) return
     activePaneRef.current = tappedIsTop ? 'top' : 'bot' // tapped pane is the driver
     otherPane.scrollTop = target // instant; the follower's echo onScroll is ignored

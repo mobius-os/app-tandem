@@ -80,3 +80,28 @@ export function computeProportionalScrollTop(driver, follower) {
   const ratio = Math.min(1, Math.max(0, driver.scrollTop / driverMax))
   return ratio * followerMax
 }
+
+/**
+ * Pad a raw word-tap target so the matched paragraph lands COMFORTABLY in view
+ * rather than flush against the pane's top edge.
+ *
+ * computeSyncScrollTop returns the aligned paragraph's own top as a scrollTop,
+ * which pins that paragraph to the very top pixel of the viewport — technically
+ * visible but cramped. We pull the target up by a fraction of the viewport
+ * height so the paragraph sits ~`margin` of the way down (default a quarter,
+ * i.e. high in the top third), then clamp to the scrollable range so a match
+ * near the very start can't scroll negative and a match near the end can't
+ * overscroll past the bottom. The clamp is what keeps BOTH tap directions
+ * on-screen: the symmetric offsetTop fix lands the right paragraph, and this
+ * keeps it inside [scrollTop, scrollTop + clientHeight] at either extreme.
+ *
+ * `rawTarget` is the aligned scrollTop (e.g. from computeSyncScrollTop).
+ * Returns a clamped number, or null if measurements are missing/non-finite.
+ */
+export function clampScrollTargetToView(rawTarget, clientHeight, scrollHeight, margin = 0.25) {
+  if (rawTarget == null || !Number.isFinite(rawTarget)) return null
+  if (!Number.isFinite(clientHeight) || !Number.isFinite(scrollHeight)) return null
+  const maxScroll = Math.max(0, scrollHeight - clientHeight)
+  const padded = rawTarget - clientHeight * margin
+  return Math.min(maxScroll, Math.max(0, padded))
+}
