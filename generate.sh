@@ -11,23 +11,35 @@
 #      feedback_history to adapt the requested level.
 #   2a. Builds a metadata INDEX of every existing story (id, titles, languages,
 #      level, summary) — bounded to one line each, so it scales with the library.
-#   2b. Reads system-prompt.md (baked schema, role + output format) and appends the
-#      generation parameters, the reader's free-form request, and the library
-#      index as a trailing section.
-#   3. Runs the chosen provider's CLI. claude runs with a Read tool SCOPED to the
-#      stories directory (--add-dir) so the agent can load the full text of the
-#      specific stories the request names ("continue X") before continuing them;
-#      only Read is allowed (no Write/Bash/network). codex runs in a read-only
-#      sandbox with no /data read and works from the index metadata alone. The
-#      provider (claude | codex) and model come from next_request, falling back to
-#      prefs.gen_provider / prefs.gen_model; the model is passed via --model. A
-#      failed custom-model run retries once on the same provider's default model.
-#      claude → `claude -p --allowedTools Read`; codex → `codex exec --json --sandbox read-only`.
-#   4. Extracts the JSON story object from stdout and validates it minimally.
-#   5. Writes stories/<id>.json and updates stories/index.json.
-#   6. Clears next_request from prefs so the next generation starts with no prompt.
-#   7. Sends a push notification on success.
-#   8. Logs to /data/cron-logs/tandem.log
+#   2b. Reads system-prompt.md (baked schema, role + output format).
+#
+#   The agent NEVER touches the filesystem. Both passes are tool-free; the
+#   "agent picks which existing stories are relevant" vision is preserved by
+#   giving the agent the metadata INDEX (not file access) and having generate.sh
+#   load the validated files itself:
+#
+#   3. Pass 1 — selection (tool-free, max-turns 1–2). Feed the agent the library
+#      index + the reader's free-form request; it returns ONLY a compact JSON
+#      `{"relevant_ids": [...]}` naming the existing stories it judges relevant
+#      (empty for a fresh topic). NO --add-dir, NO --allowedTools Read, NO tools.
+#   4. generate.sh VALIDATES + LOADS (no agent). Each returned id is kept only if
+#      it matches the story-id (UUID v4) format AND is present in the library
+#      index (provably a member of THIS app's stories dir — never an arbitrary
+#      path); the list is capped at ≤3. generate.sh then fetches each kept story's
+#      full text via the SAME authenticated storage-API curl it uses for
+#      index.json/prefs.json. The agent never names a path, so it can never make
+#      generate.sh read /data/cli-auth or any out-of-dir file.
+#   5. Pass 2 — generation (tool-free). Feed the system prompt + parameters + the
+#      INLINED full text of only the validated stories + the request; the agent
+#      returns the story JSON. NO tools. Both providers share one code path:
+#      claude → `claude -p` (no tools); codex → `codex exec --json --sandbox
+#      read-only`. The model is passed via --model; a failed custom-model run
+#      retries once on the same provider's default model.
+#   6. Extracts the JSON story object from stdout and validates it minimally.
+#   7. Writes stories/<id>.json and updates stories/index.json.
+#   8. Clears next_request from prefs so the next generation starts with no prompt.
+#   9. Sends a push notification on success.
+#  10. Logs to /data/cron-logs/tandem.log
 
 set -uo pipefail
 
@@ -44,10 +56,6 @@ case "$APP_ID" in
 esac
 
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
-# Root of the per-app on-disk storage tree the storage API serves. The Read
-# tool (claude provider) opens story files directly off this path; overridable
-# for tests / non-default deployments.
-DATA_DIR="${DATA_DIR:-/data}"
 NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 LOG_DIR=/data/cron-logs
 LOG_FILE="$LOG_DIR/tandem.log"
@@ -159,13 +167,13 @@ if isinstance(history, list):
 # next_request if present. The prompt REPLACES the old topic + storyline +
 # mode split (v0.10): the reader types one natural-language ask ("a sci-fi
 # mystery in French", "continue the cartographer story but darker") and the
-# generation agent loads whatever existing stories it judges relevant. It is
-# per-run by design — it lives ONLY inside next_request, so the post-run wipe
-# clears it and the next free generation starts blank. Old prefs that still
-# carry a legacy top-level `storyline` or a next_request `topic`/`storyline`
-# fold into the prompt (lenient migration) so a mid-upgrade run is not silently
-# dropped. Collapse internal whitespace so an embedded newline can not inject
-# extra prompt lines downstream.
+# selection pass (pass 1) decides which existing stories it judges relevant.
+# It is per-run by design — it lives ONLY inside next_request, so the post-run
+# wipe clears it and the next free generation starts blank. Old prefs that
+# still carry a legacy top-level `storyline` or a next_request `topic`/
+# `storyline` fold into the prompt (lenient migration) so a mid-upgrade run is
+# not silently dropped. Collapse internal whitespace so an embedded newline can
+# not inject extra prompt lines downstream.
 next_req = prefs.get("next_request") or {}
 if not isinstance(next_req, dict):
     next_req = {}
@@ -238,25 +246,27 @@ log "Generating level=$LEVEL provider=${GEN_PROVIDER:-claude} model=${GEN_MODEL:
 
 # 2b. Build a metadata INDEX of EVERY existing story (id, both titles,
 # languages, level, one-line summary) — not just the 5/10 most recent. This is
-# what lets the free-form prompt work: the generation agent sees the whole
-# library as metadata and decides which (if any) stories are relevant to the
-# reader's ask ("continue X", "a sequel to Y"). It then loads the FULL text of
-# only those stories via the Read tool (claude provider) — the index stays
-# bounded (one line per story) while the heavyweight full text is pulled on
-# demand, so the context cost does not grow with the library.
+# what lets the free-form prompt work: the SELECTION pass (pass 1) sees the
+# whole library as metadata and decides which (if any) stories are relevant to
+# the reader's ask ("continue X", "a sequel to Y"). The agent returns only the
+# ids; generate.sh — not the agent — then loads the full text of those stories.
+# The index stays bounded (one line per story) while the heavyweight full text
+# is pulled on demand, so the context cost does not grow with the library.
 #
-# The index entry carries the story id so the agent can map a title in the
-# prompt to the on-disk file <id>.json. Stories are read off the SAME on-disk
-# directory the storage API serves (/data/apps/<APP_ID>/stories): the run-job
-# runner executes generate.sh as the mobius user with read access to /data,
-# so the Read tool can open <id>.json directly (verified: claude --allowedTools
-# Read --add-dir <dir> opens these files non-interactively).
-STORIES_DIR="${DATA_DIR:-/data}/apps/$APP_ID/stories"
+# The index entry carries the story id so pass 1 can map a title in the prompt
+# to a concrete id, and so generate.sh can validate that id against the index
+# (provable membership of THIS app's stories) before loading it. The library
+# is fetched through the authenticated storage API (index.json then each
+# <id>.json) — the agent has NO filesystem access at any point.
 STORIES_INDEX="(no stories yet)"
 INDEX_EARLY_FILE="$WORK_DIR/index-early.json"
 EARLY_CODE=$(curl -sS -o "$INDEX_EARLY_FILE" -w "%{http_code}" \
   -H "Authorization: Bearer $SERVICE_TOKEN" \
   "$API_BASE_URL/api/storage/apps/$APP_ID/stories/index.json") || EARLY_CODE=000
+if [ "$EARLY_CODE" != "200" ]; then
+  # No index yet (first-ever generation) — there is nothing to select from.
+  : > "$INDEX_EARLY_FILE"
+fi
 if [ "$EARLY_CODE" = "200" ]; then
   STORIES_INDEX=$(python3 -c '
 import json, sys
@@ -283,11 +293,233 @@ except Exception:
 ' "$INDEX_EARLY_FILE")
 fi
 
-# 3. Build the combined prompt file (system prompt + generation parameters +
-# the reader's free-form request + the full library index). The agent reads
-# the index, decides which existing stories (if any) the request refers to,
-# loads their full text via the Read tool when relevant, then writes the new
-# story.
+# ---------------------------------------------------------------------------
+# Provider runner — TOOL-FREE for BOTH passes and BOTH providers.
+#
+# Neither pass grants the agent any tool. There is NO --add-dir, NO
+# --allowedTools Read, NO --permission-mode dontAsk: the agent reads a prompt
+# and writes text, nothing else. claude runs `claude -p` with the prompt as a
+# system prompt and a fixed user turn; codex runs `codex exec --json` in a
+# read-only sandbox (also no /data access). The model id is passed via --model
+# only when one is set, so an empty model falls back to the CLI's own default;
+# the CLI is the authority on what resolves, and a rejected id degrades to the
+# default-model retry. This makes the two providers symmetric — there is no
+# provider-specific "Using the library / Read tool" divergence any more.
+# ---------------------------------------------------------------------------
+
+# run_agent <prompt-file> <model-or-empty> <raw-output-file> <user-turn>
+# Returns the CLI's exit code; writes the model's stdout to <raw-output-file>.
+run_agent() {
+  local prompt_file="$1" model="$2" raw_out="$3" user_turn="$4"
+  if [ "$GEN_PROVIDER" = "codex" ]; then
+    if ! command -v codex >/dev/null 2>&1; then
+      log "ERROR: provider=codex but codex CLI not installed"
+      return 127
+    fi
+    local codex_flags=( exec --json --sandbox read-only )
+    if [ -n "$model" ]; then
+      codex_flags+=( --model "$model" )
+    fi
+    codex_flags+=( - )
+    printf '%s\n\n---\n\n%s\n' "$(cat "$prompt_file")" "$user_turn" \
+      | timeout "$TANDEM_TIMEOUT" codex "${codex_flags[@]}" \
+      > "$raw_out" 2>>"$LOG_FILE"
+    return $?
+  fi
+  # Default provider: claude. NO tools — the prompt file is the system prompt
+  # and the user turn is the only message.
+  if ! command -v claude >/dev/null 2>&1; then
+    log "ERROR: provider=claude but claude CLI not installed"
+    return 127
+  fi
+  local flags=(
+    --system-prompt-file "$prompt_file"
+    --max-turns 2
+  )
+  if [ -n "$model" ]; then
+    flags+=( --model "$model" )
+  fi
+  timeout "$TANDEM_TIMEOUT" env CLAUDE_CONFIG_DIR=/data/cli-auth/claude \
+    claude -p "$user_turn" \
+    "${flags[@]}" > "$raw_out" 2>>"$LOG_FILE"
+}
+
+# ---------------------------------------------------------------------------
+# PASS 1 — selection (tool-free). Give the agent the library index + the
+# reader's request; it returns ONLY {"relevant_ids": [...]}. generate.sh then
+# validates those ids against the index and loads the matching files itself.
+# Skipped entirely when the library is empty (nothing to select).
+# ---------------------------------------------------------------------------
+RELEVANT_IDS=""           # newline-separated validated ids (may be empty)
+LOADED_STORIES=""         # inlined full text of the validated stories for pass 2
+
+if [ "$EARLY_CODE" = "200" ] && [ "$STORIES_INDEX" != "(no stories yet)" ]; then
+  SELECT_PROMPT_FILE="$WORK_DIR/select-prompt.md"
+  {
+    printf '# Tandem story-selection pass\n\n'
+    printf 'You are the selection step for a bilingual story generator. You do NOT write a story here. Your only job is to decide which (if any) of the EXISTING stories listed below the reader is asking to continue, extend, or build on.\n\n'
+    printf '## Reader request\n\n'
+    if [ -n "$PROMPT_TEXT" ]; then
+      printf 'The reader asked for: %s\n\n' "$PROMPT_TEXT"
+      printf 'If this request names or describes one of the existing stories below (e.g. "continue X", "a sequel to Y", "more of the cartographer story", or an explicit id), return that story'"'"'s id (or the few ids it clearly concerns). If it just describes a fresh genre/theme/setting ("a sci-fi mystery in French", "something funny") and does NOT point at an existing story, return an empty list.\n\n'
+    else
+      printf 'There is no specific request — a fresh, original story will be written. Return an empty list.\n\n'
+    fi
+    printf '## Library index (every existing story — metadata only)\n\n'
+    printf 'Each line is one existing story: its id, both titles, [languages level], and a one-line summary.\n\n'
+    printf '%s\n\n' "$STORIES_INDEX"
+    printf '## Output\n\n'
+    printf 'Output ONLY a single JSON object and nothing else, no prose, no markdown fences:\n'
+    printf '{"relevant_ids": ["<id>", ...]}\n\n'
+    printf 'Use ONLY ids that appear VERBATIM in the index above. Pick the smallest set that answers the request — usually zero or one, never more than three. If nothing is clearly relevant, return {"relevant_ids": []}.\n'
+  } > "$SELECT_PROMPT_FILE"
+
+  SELECT_RAW="$WORK_DIR/select.out"
+  SELECT_TURN="Return the relevant story ids now as {\"relevant_ids\": [...]} and nothing else."
+  # The selection pass is cheap and order-insensitive to the model — run it on
+  # the chosen model, then the provider default, just like generation, so an
+  # invalid model id still yields a selection rather than a hard failure.
+  SELECT_JSON=""
+  for SEL_MODEL in ${GEN_MODEL:+"$GEN_MODEL"} ""; do
+    run_agent "$SELECT_PROMPT_FILE" "$SEL_MODEL" "$SELECT_RAW" "$SELECT_TURN"
+    SELECT_JSON=$(python3 - "$SELECT_RAW" "$INDEX_EARLY_FILE" "$GEN_PROVIDER" <<'PY' 2>>"$LOG_FILE"
+import json
+import re
+import sys
+import uuid as uuid_mod
+
+raw_path, index_path, provider = sys.argv[1], sys.argv[2], sys.argv[3]
+
+with open(raw_path, encoding="utf-8", errors="replace") as f:
+    raw = f.read()
+
+# codex `exec --json` emits JSONL — unwrap the final agent_message to its body.
+if provider == "codex":
+    last = ""
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        msg = obj.get("msg", obj) if isinstance(obj, dict) else {}
+        if isinstance(msg, dict) and msg.get("type") == "agent_message":
+            m = msg.get("message", "")
+            if isinstance(m, str):
+                last = m
+    if last:
+        raw = last
+
+stripped = re.sub(r'```(?:json)?\s*', '', raw).strip()
+first = stripped.find('{')
+last = stripped.rfind('}')
+if first == -1 or last == -1 or last <= first:
+    # Nothing parseable — treat as "no relevant stories" (fresh generation).
+    print("[]", end="")
+    sys.exit(0)
+try:
+    obj = json.loads(stripped[first:last + 1])
+except json.JSONDecodeError:
+    print("[]", end="")
+    sys.exit(0)
+
+requested = obj.get("relevant_ids") if isinstance(obj, dict) else None
+if not isinstance(requested, list):
+    print("[]", end="")
+    sys.exit(0)
+
+# Build the set of ids that PROVABLY belong to this app's library, straight
+# from the index we fetched through the storage API. An id is loadable only if
+# it is (a) a valid story-id (UUID v4) AND (b) present here. This is the gate
+# that makes an arbitrary path impossible: the agent never supplies a path, only
+# an id, and only ids that are members of THIS index survive.
+known = set()
+try:
+    idx = json.load(open(index_path, encoding="utf-8"))
+    for e in (idx if isinstance(idx, list) else []):
+        if isinstance(e, dict) and isinstance(e.get("id"), str):
+            known.add(e["id"])
+except Exception:
+    pass
+
+valid = []
+seen = set()
+for rid in requested:
+    if not isinstance(rid, str):
+        continue
+    rid = rid.strip()
+    if rid in seen:
+        continue
+    try:
+        uuid_mod.UUID(rid)          # must be a real story-id shape
+    except Exception:
+        continue
+    if rid not in known:            # must be a member of this app's index
+        continue
+    seen.add(rid)
+    valid.append(rid)
+    if len(valid) >= 3:             # cap at ≤3 loaded stories
+        break
+
+print(json.dumps(valid), end="")
+PY
+)
+    # A pass that parsed (even to "[]") is a success; only a hard CLI failure
+    # with NO output retries on the default model.
+    if [ -n "$SELECT_JSON" ]; then
+      break
+    fi
+    if [ -n "$SEL_MODEL" ]; then
+      log "Selection pass produced no output; retrying with the default model."
+    fi
+  done
+  [ -z "$SELECT_JSON" ] && SELECT_JSON="[]"
+
+  # Newline-list the validated ids for the shell, then load each story's full
+  # text via the SAME authenticated storage-API curl used for index.json. The
+  # agent is NOT involved in this step.
+  RELEVANT_IDS=$(python3 -c 'import json,sys
+try:
+    ids=json.loads(sys.argv[1])
+except Exception:
+    ids=[]
+print("\n".join(i for i in ids if isinstance(i,str)))' "$SELECT_JSON")
+
+  if [ -n "$RELEVANT_IDS" ]; then
+    log "Selection pass chose ${RELEVANT_IDS//$'\n'/, } for prompt: ${PROMPT_TEXT:-(none)}"
+    LOADED_FILE="$WORK_DIR/loaded-stories.md"
+    : > "$LOADED_FILE"
+    while IFS= read -r SID; do
+      [ -z "$SID" ] && continue
+      STORY_TXT="$WORK_DIR/loaded-$SID.json"
+      LOAD_CODE=$(curl -sS -o "$STORY_TXT" -w "%{http_code}" \
+        -H "Authorization: Bearer $SERVICE_TOKEN" \
+        "$API_BASE_URL/api/storage/apps/$APP_ID/stories/$SID.json") || LOAD_CODE=000
+      if [ "$LOAD_CODE" != "200" ]; then
+        log "WARN: could not load selected story $SID (HTTP $LOAD_CODE); continuing without it"
+        continue
+      fi
+      {
+        printf '### Existing story (id=%s)\n\n' "$SID"
+        printf '```json\n'
+        cat "$STORY_TXT"
+        printf '\n```\n\n'
+      } >> "$LOADED_FILE"
+    done <<< "$RELEVANT_IDS"
+    if [ -s "$LOADED_FILE" ]; then
+      LOADED_STORIES=$(cat "$LOADED_FILE")
+    fi
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# PASS 2 — generation (tool-free). Build the generation prompt: system prompt +
+# parameters + the reader's request + the INLINED full text of the validated
+# stories (if any). The agent has no file access; it works only from what is in
+# this prompt. NO tools.
+# ---------------------------------------------------------------------------
 PROMPT_FILE="$WORK_DIR/prompt.md"
 {
   cat "$SYSTEM_FILE"
@@ -300,28 +532,22 @@ PROMPT_FILE="$WORK_DIR/prompt.md"
   printf '\n## Reader request\n\n'
   if [ -n "$PROMPT_TEXT" ]; then
     printf 'The reader asked for: %s\n' "$PROMPT_TEXT"
-    printf 'Interpret this freely. If it names or describes an existing story (e.g. "continue X", "a sequel to Y", "more of the cartographer story"), find that story in the library index below, READ its full text first (see "Using the library"), and continue it coherently — same characters, world, and voice, a NEW incident. If it just describes a genre/theme/setting ("a sci-fi mystery in French", "something funny"), write a fresh standalone story in that vein. The base/target languages and level above are defaults; if the request explicitly asks for a different language or difficulty, honor the request.\n'
+    printf 'Interpret this freely. If it asks to continue or extend an existing story, the relevant story (or stories) is inlined under "Stories to continue" below — continue it coherently, same characters, world, and voice, a NEW incident. If it just describes a genre/theme/setting ("a sci-fi mystery in French", "something funny") and no story is inlined, write a fresh standalone story in that vein. The base/target languages and level above are defaults; if the request explicitly asks for a different language or difficulty, honor the request.\n'
   else
     printf 'No specific request — write a fresh, original standalone story. Vary setting, genre, and mood from the recent library entries below; do not repeat a premise that already appears there.\n'
   fi
   printf '\n## Library index (every existing story — metadata only)\n\n'
-  printf 'Each line is one existing story: its id, both titles, [languages level], and a one-line summary. This is METADATA only — do NOT assume you know a story'"'"'s full content from its summary.\n\n'
+  printf 'Each line is one existing story: its id, both titles, [languages level], and a one-line summary. This is METADATA only — do NOT assume you know a story'"'"'s full content from its summary. You have NO file access; if you need a story'"'"'s full text it is inlined under "Stories to continue" below (the selection step already loaded the relevant ones).\n\n'
   printf '%s\n' "$STORIES_INDEX"
-  printf '\n## Using the library\n\n'
-  if [ "$GEN_PROVIDER" = "codex" ]; then
-    # Codex runs in a read-only sandbox with NO filesystem read of /data, so it
-    # works from the index metadata alone. It can still continue a series from
-    # the summary, just without the full prior text — an acceptable, documented
-    # degradation; the default (claude) provider gets the full-text deep dive.
-    printf 'You are working from the metadata index above only (no file access). To continue a named story, rely on its summary and titles for continuity. Always write a NEW incident, never a retelling.\n'
-  else
-    printf 'You have a Read tool scoped to the stories directory: %s\n' "$STORIES_DIR"
-    printf 'When the reader request points at one or more existing stories, Read the relevant file(s) by id — the path is %s/<id>.json — BEFORE writing, so the continuation matches the established characters, plot, and tone. Read only the few stories that are actually relevant (do not read the whole library). If the request is a fresh standalone story, you may skip reading and just avoid repeating the premises listed above.\n' "$STORIES_DIR"
+  if [ -n "$LOADED_STORIES" ]; then
+    printf '\n## Stories to continue (full text, loaded for you)\n\n'
+    printf 'The selection step judged these existing stories relevant to the request and loaded their FULL text for you. Continue from them — match the established characters, plot, names, and tone, and write a NEW incident (never a retelling). Keep the same lang_a/lang_b/level as the story you are continuing unless the request explicitly changes them.\n\n'
+    printf '%s\n' "$LOADED_STORIES"
   fi
   printf '\nGenerate the story now. Output ONLY the JSON object described above.\n'
 } > "$PROMPT_FILE"
 
-# 4+5. Run the Claude CLI and extract + validate the JSON story.
+# 6. Run the generation pass and extract + validate the JSON story.
 #
 # Model fallback contract: when a custom model is set and the run fails —
 # nonzero exit OR no extractable story — retry ONCE with the platform
@@ -332,65 +558,7 @@ PROMPT_FILE="$WORK_DIR/prompt.md"
 # model id.
 RAW_OUTPUT="$WORK_DIR/agent.out"
 STORY_FILE="$WORK_DIR/story.json"
-
-# Provider routing: claude runs `claude -p` with the Read tool ENABLED and
-# scoped to the stories directory (--add-dir), so the agent can load the full
-# text of whichever existing stories the free-form request points at before
-# continuing them. Only the Read tool is allowed — no Write, no Bash, no
-# network — so the worst a prompt-injection in a stored story could do is make
-# the agent read another already-owner-owned /data file; it can not write,
-# exfiltrate, or execute. Codex runs `codex exec --json` in a read-only sandbox
-# (no /data read at all): it works from the metadata index alone, a documented
-# degradation. Both pass --model only when one is set, so an empty model falls
-# back to the CLI's own default. The model id is passed verbatim; the CLI is
-# the authority on what resolves, and a rejected id degrades to the
-# default-model retry below.
 USER_TURN="Generate the bilingual story now. Output only the JSON object."
-
-run_agent() {
-  # $1 — model id, or empty for the chosen CLI's default (no --model flag).
-  if [ "$GEN_PROVIDER" = "codex" ]; then
-    if ! command -v codex >/dev/null 2>&1; then
-      log "ERROR: provider=codex but codex CLI not installed"
-      return 127
-    fi
-    local codex_flags=( exec --json --sandbox read-only )
-    if [ -n "$1" ]; then
-      codex_flags+=( --model "$1" )
-    fi
-    codex_flags+=( - )
-    printf '%s\n\n---\n\n%s\n' "$(cat "$PROMPT_FILE")" "$USER_TURN" \
-      | timeout "$TANDEM_TIMEOUT" codex "${codex_flags[@]}" \
-      > "$RAW_OUTPUT" 2>>"$LOG_FILE"
-    return $?
-  fi
-  # Default provider: claude.
-  if ! command -v claude >/dev/null 2>&1; then
-    log "ERROR: provider=claude but claude CLI not installed"
-    return 127
-  fi
-  # Read tool ONLY, scoped to the stories directory. --add-dir grants the
-  # path; --allowedTools "Read" allows nothing else (no Write/Bash/network);
-  # --permission-mode dontAsk lets the scoped reads proceed in the headless
-  # -p run (there is no human to grant a prompt). max-turns is raised so the
-  # agent has room to Read one or two stories AND then write the JSON. The dir
-  # is created if absent (first-ever generation has no stories/ yet) so --add-dir
-  # never points at a missing path.
-  mkdir -p "$STORIES_DIR" 2>/dev/null || true
-  local flags=(
-    --system-prompt-file "$PROMPT_FILE"
-    --allowedTools "Read"
-    --add-dir "$STORIES_DIR"
-    --permission-mode dontAsk
-    --max-turns 8
-  )
-  if [ -n "$1" ]; then
-    flags+=( --model "$1" )
-  fi
-  timeout "$TANDEM_TIMEOUT" env CLAUDE_CONFIG_DIR=/data/cli-auth/claude \
-    claude -p "$USER_TURN" \
-    "${flags[@]}" > "$RAW_OUTPUT" 2>>"$LOG_FILE"
-}
 
 # Prints the story id on success (story written to $STORY_FILE); prints
 # nothing on failure.
@@ -529,7 +697,7 @@ PY
 STORY_ID=""
 FAIL_BODY=""
 for ATTEMPT_MODEL in ${GEN_MODEL:+"$GEN_MODEL"} ""; do
-  run_agent "$ATTEMPT_MODEL"
+  run_agent "$PROMPT_FILE" "$ATTEMPT_MODEL" "$RAW_OUTPUT" "$USER_TURN"
   CLI_EXIT=$?
   if [ "$CLI_EXIT" -ne 0 ]; then
     log "ERROR: agent exited with code $CLI_EXIT (provider=${GEN_PROVIDER:-claude} model=${ATTEMPT_MODEL:-default})"
@@ -561,7 +729,7 @@ if [ -z "$STORY_ID" ]; then
   exit 1
 fi
 
-# 6. PUT stories/<id>.json to storage.
+# 7. PUT stories/<id>.json to storage.
 STORY_URL="$API_BASE_URL/api/storage/apps/$APP_ID/stories/$STORY_ID.json"
 PUT_CODE=$(curl -sS -o /dev/null -w "%{http_code}" \
   -X PUT "$STORY_URL" \
@@ -576,7 +744,7 @@ fi
 
 log "Saved story $STORY_ID (level=$LEVEL)"
 
-# 7. Update stories/index.json — fetch existing, append new entry, PUT back.
+# 8. Update stories/index.json — fetch existing, append new entry, PUT back.
 INDEX_FILE="$WORK_DIR/index.json"
 INDEX_CODE=$(curl -sS -o "$INDEX_FILE" -w "%{http_code}" \
   -H "Authorization: Bearer $SERVICE_TOKEN" \
@@ -621,7 +789,7 @@ if [ "$IDX_PUT_CODE" != "200" ] && [ "$IDX_PUT_CODE" != "201" ] && [ "$IDX_PUT_C
   log "WARN: failed to update stories/index.json (HTTP $IDX_PUT_CODE)"
 fi
 
-# 7b. Clear next_request from prefs so the next generation starts with no prompt.
+# 8b. Clear next_request from prefs so the next generation starts with no prompt.
 CLEAR_PREFS_CODE=$(python3 - "$PREFS_FILE" "$PREFS_CODE" <<'PY' > "$WORK_DIR/prefs-cleared.json" 2>>"$LOG_FILE"
 import json
 import sys
@@ -650,7 +818,7 @@ if [ -s "$WORK_DIR/prefs-cleared.json" ]; then
   fi
 fi
 
-# 8. Push notification.
+# 9. Push notification.
 curl -sS -X POST "$API_BASE_URL/api/notifications/send" \
   -H "Authorization: Bearer $SERVICE_TOKEN" \
   -H "Content-Type: application/json" \

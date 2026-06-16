@@ -290,7 +290,7 @@ test('generate.sh routes to the codex CLI for the codex provider', () => {
 })
 
 test('generate.sh routes to the claude CLI by default', () => {
-  assert.ok(GENERATE_SH.includes('claude -p "$USER_TURN"'))
+  assert.ok(GENERATE_SH.includes('claude -p "$user_turn"'))
   assert.ok(GENERATE_SH.includes('env CLAUDE_CONFIG_DIR=/data/cli-auth/claude'))
 })
 
@@ -300,10 +300,10 @@ test('generate.sh unwraps codex JSONL agent_message before extracting JSON', () 
 })
 
 test('generate.sh passes --model only when a model is set, for both CLIs', () => {
-  // Both run_agent branches guard --model on a non-empty $1.
-  assert.ok(GENERATE_SH.includes('flags+=( --model "$1" )'))
-  assert.ok(GENERATE_SH.includes('codex_flags+=( --model "$1" )'))
-  assert.ok((GENERATE_SH.match(/if \[ -n "\$1" \]; then/g) || []).length >= 2,
+  // Both run_agent branches guard --model on the non-empty $model local.
+  assert.ok(GENERATE_SH.includes('flags+=( --model "$model" )'))
+  assert.ok(GENERATE_SH.includes('codex_flags+=( --model "$model" )'))
+  assert.ok((GENERATE_SH.match(/if \[ -n "\$model" \]; then/g) || []).length >= 2,
     'each provider branch must guard the --model flag — Default means NO flag')
 })
 

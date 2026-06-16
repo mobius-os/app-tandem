@@ -69,9 +69,20 @@ test('system prompt has a Continuing-an-existing-story section (replaces storyli
     'the old per-series continuity line must be gone')
 })
 
-test('system prompt documents loading a story by id via the library', () => {
-  assert.match(SYSTEM_PROMPT, /Using the library/)
-  assert.match(SYSTEM_PROMPT, /<id>\.json/)
+// v0.11 — two-pass tool-free design. The generation pass has NO file access;
+// the relevant stories' full text is inlined by generate.sh (the selection
+// pass + shell loader), so the system prompt must point at the inlined block,
+// not a Read tool / on-disk path.
+test('system prompt documents the inlined full text, not a Read tool', () => {
+  // The generation prompt is told the relevant stories arrive inlined.
+  assert.match(SYSTEM_PROMPT, /Stories to continue/)
+  // It must state it has no file access / no tools.
+  assert.match(SYSTEM_PROMPT, /NO file access|no file access/)
+  // The old Read-tool framing must be gone.
+  assert.ok(!/Using the library/.test(SYSTEM_PROMPT),
+    'the old "Using the library" Read-tool section must be gone')
+  assert.ok(!/Read its full text|Read the relevant file|Read tool/.test(SYSTEM_PROMPT),
+    'the system prompt must not instruct the agent to Read files')
 })
 
 // ---------------------------------------------------------------------------
@@ -105,7 +116,7 @@ test('generate.sh read-side validation stays lenient (no glossary/length require
     'extraction must not enforce a paragraph-count bar')
 })
 
-// v0.10 — free-form prompt + full library index + scoped Read tool.
+// v0.10/0.11 — free-form prompt + full library index, agent picks ids (no file access).
 test('generate.sh carries the reader free-form prompt into the prompt file', () => {
   // The single prompt field is read from next_request and surfaced under a
   // "Reader request" heading.
@@ -124,23 +135,61 @@ test('generate.sh builds a library index over EVERY story, not just the recent f
     'the index loop must walk all entries')
   assert.ok(GENERATE_SH.includes('## Library index'),
     'the prompt file must have a Library index section')
-  // Index entries must carry the id (so the agent can open <id>.json).
+  // Index entries must carry the id so the selection pass can name it and
+  // generate.sh can validate it against the index before loading.
   assert.ok(GENERATE_SH.includes('id={sid}'),
     'each index line must expose the story id')
 })
 
-test('generate.sh runs claude with a Read tool scoped to the stories dir', () => {
-  // The pivotal mechanism: claude gets ONLY the Read tool, scoped via --add-dir
-  // to the on-disk stories directory, so it loads relevant stories on demand.
-  assert.ok(GENERATE_SH.includes('--allowedTools "Read"'),
-    'claude must allow only the Read tool')
-  assert.ok(GENERATE_SH.includes('--add-dir "$STORIES_DIR"'),
-    'claude must scope file access to the stories dir')
-  assert.ok(GENERATE_SH.includes('apps/$APP_ID/stories'),
-    'the stories dir must resolve under the per-app storage path')
-  // It must NOT regress to the old no-tools invocation.
-  assert.ok(!GENERATE_SH.includes('--allowedTools ""'),
-    'the no-tools generation must be gone')
+// v0.11 — SECURE two-pass, TOOL-FREE design. The agent gets ZERO filesystem
+// access: no --add-dir, no --allowedTools Read, no --permission-mode dontAsk on
+// EITHER pass. The "agent picks relevant stories" vision survives via a
+// selection pass that returns ids, which generate.sh validates against the
+// index and loads itself.
+test('generate.sh grants the agent NO filesystem tools (security: no Read/add-dir/dontAsk)', () => {
+  // Strip comment lines: the header legitimately documents that these flags are
+  // ABSENT ("NO --add-dir, ..."). The security guarantee is that they never
+  // appear as ACTUAL CLI arguments, so we check only the executable lines.
+  const CODE = GENERATE_SH.split('\n')
+    .filter((l) => !l.trimStart().startsWith('#'))
+    .join('\n')
+  assert.ok(!CODE.includes('--add-dir'),
+    'the agent must NOT be granted a directory via --add-dir (additive grant, not a sandbox)')
+  assert.ok(!CODE.includes('--allowedTools'),
+    'the agent must NOT be granted any tool via --allowedTools')
+  assert.ok(!CODE.includes('--permission-mode'),
+    'no --permission-mode — there are no tool prompts to auto-grant')
+})
+
+test('generate.sh runs a tool-free selection pass that returns relevant_ids', () => {
+  // Pass 1: the agent sees only the index + request and returns a compact JSON.
+  assert.ok(GENERATE_SH.includes('relevant_ids'),
+    'the selection pass must ask for a relevant_ids list')
+  assert.ok(GENERATE_SH.includes('## Library index'),
+    'the selection prompt must carry the library index to choose from')
+  // claude runs -p with only a system-prompt-file + a max-turns cap (no tools).
+  assert.ok(GENERATE_SH.includes('--system-prompt-file'),
+    'the agent runs from a system-prompt-file (prompt in, text out)')
+})
+
+test('generate.sh validates selected ids against the index and caps the load (security)', () => {
+  // An id is loadable only if it is a real story-id (UUID) AND a member of the
+  // app's own index — this is what makes an arbitrary out-of-dir path impossible.
+  assert.ok(GENERATE_SH.includes('uuid_mod.UUID(rid)'),
+    'each selected id must pass a UUID-shape check')
+  assert.ok(GENERATE_SH.includes('if rid not in known:'),
+    'each selected id must be a member of THIS app\'s library index')
+  assert.ok(GENERATE_SH.includes('if len(valid) >= 3:'),
+    'the loaded-story set must be capped (≤3)')
+})
+
+test('generate.sh — NOT the agent — loads the validated story files via the storage API', () => {
+  // The full text is fetched by the shell through the authenticated storage API
+  // (same path as index.json/prefs.json), then inlined into pass 2.
+  assert.ok(GENERATE_SH.includes('/api/storage/apps/$APP_ID/stories/$SID.json'),
+    'generate.sh loads each validated story by id via the storage API')
+  assert.ok(GENERATE_SH.includes('Stories to continue'),
+    'the generation prompt inlines the loaded stories under a Stories-to-continue heading')
 })
 
 test('generate.sh lenient-migrates legacy topic/storyline into the prompt', () => {
