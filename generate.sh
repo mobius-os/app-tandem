@@ -444,17 +444,36 @@ try:
 except Exception:
     pass
 
+# story ids are minted only by uuid_mod.uuid4() (this script) — always a
+# canonical, lowercase UUID v4. The id the agent hands back must match that
+# exact shape: anything else (a v1/v3/v5 uuid, an uppercased or brace-wrapped
+# form, a path with a uuid prefix, trailing ?query/CRLF junk) is not a story we
+# minted and must not be loadable. The anchored fullmatch rejects surrounding
+# junk; the parse-and-recanonicalize check is the belt to that regex's braces:
+# str(UUID(rid)) round-trips to the canonical lowercase form, and .version == 4
+# pins the variant. Membership + cap below stay as defense-in-depth.
+V4_RE = re.compile(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+)
+
+def is_canonical_v4(s):
+    if not V4_RE.fullmatch(s):
+        return False
+    try:
+        parsed = uuid_mod.UUID(s)
+    except Exception:
+        return False
+    return parsed.version == 4 and str(parsed) == s
+
 valid = []
 seen = set()
 for rid in requested:
     if not isinstance(rid, str):
         continue
-    rid = rid.strip()
+    rid = rid.strip().lower()
     if rid in seen:
         continue
-    try:
-        uuid_mod.UUID(rid)          # must be a real story-id shape
-    except Exception:
+    if not is_canonical_v4(rid):    # must be a canonical UUID v4 story-id
         continue
     if rid not in known:            # must be a member of this app's index
         continue

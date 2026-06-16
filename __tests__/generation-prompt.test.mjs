@@ -175,8 +175,13 @@ test('generate.sh runs a tool-free selection pass that returns relevant_ids', ()
 test('generate.sh validates selected ids against the index and caps the load (security)', () => {
   // An id is loadable only if it is a real story-id (UUID) AND a member of the
   // app's own index — this is what makes an arbitrary out-of-dir path impossible.
-  assert.ok(GENERATE_SH.includes('uuid_mod.UUID(rid)'),
-    'each selected id must pass a UUID-shape check')
+  // The id-shape gate is now a canonical-UUID-v4 check (see behavioral tests
+  // below for the actual rejection/accept proof — these string-matches only
+  // confirm the structural pieces are present).
+  assert.ok(GENERATE_SH.includes('is_canonical_v4(rid)'),
+    'each selected id must pass a canonical-UUID-v4 check')
+  assert.ok(GENERATE_SH.includes('parsed.version == 4'),
+    'the id-shape check must pin the UUID variant to v4')
   assert.ok(GENERATE_SH.includes('if rid not in known:'),
     'each selected id must be a member of THIS app\'s library index')
   assert.ok(GENERATE_SH.includes('if len(valid) >= 3:'),
