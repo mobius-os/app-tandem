@@ -9,8 +9,10 @@
 #   1. Loads the service token and reads prefs.json (target language, base language,
 #      CEFR level, the free-form generation prompt, generation model). Applies
 #      feedback_history to adapt the requested level.
-#   2a. Builds a metadata INDEX of every existing story (id, titles, languages,
-#      level, summary) — bounded to one line each, so it scales with the library.
+#   2a. Builds a metadata INDEX of every existing story — the same registry the
+#      reader sees in the library list, with the same card fields (id, titles,
+#      languages, level, created date, the reader's difficulty rating) plus the
+#      one-line summary — bounded to one line each, so it scales with the library.
 #   2b. Reads system-prompt.md (baked schema, role + output format).
 #
 #   The agent NEVER touches the filesystem. Both passes are tool-free; the
@@ -25,7 +27,7 @@
 #   4. generate.sh VALIDATES + LOADS (no agent). Each returned id is kept only if
 #      it matches the story-id (UUID v4) format AND is present in the library
 #      index (provably a member of THIS app's stories dir — never an arbitrary
-#      path); the list is capped at ≤3. generate.sh then fetches each kept story's
+#      path); the list is capped at ≤6. generate.sh then fetches each kept story's
 #      full text via the SAME authenticated storage-API curl it uses for
 #      index.json/prefs.json. The agent never names a path, so it can never make
 #      generate.sh read /data/cli-auth or any out-of-dir file.
@@ -245,7 +247,8 @@ PROMPT_TEXT="${REST5#*$'\t'}"
 log "Generating level=$LEVEL provider=${GEN_PROVIDER:-claude} model=${GEN_MODEL:-default} prompt=${PROMPT_TEXT:-(none)} story: $LANG_A / $LANG_B (recent ratings: $RATINGS)"
 
 # 2b. Build a metadata INDEX of EVERY existing story (id, both titles,
-# languages, level, one-line summary) — not just the 5/10 most recent. This is
+# languages, level, created date, the reader's difficulty rating, one-line
+# summary) — the full library registry, not just the 5/10 most recent. This is
 # what lets the free-form prompt work: the SELECTION pass (pass 1) sees the
 # whole library as metadata and decides which (if any) stories are relevant to
 # the reader's ask ("continue X", "a sequel to Y"). The agent returns only the
@@ -270,6 +273,13 @@ fi
 if [ "$EARLY_CODE" = "200" ]; then
   STORIES_INDEX=$(python3 -c '
 import json, sys
+# The registry the agent sees is the SAME library list the reader sees before
+# tapping a story: every story, with the same fields the library card shows
+# (title_a, title_b, lang_a/lang_b, level, and the reader-set difficulty
+# rating), plus the one-line summary as extra context. Every entry in the
+# library index is listed — there is no truncation; the agent "sees what the
+# user sees".
+RATING_LABELS = {"too_simple": "too easy", "just_right": "just right", "too_complex": "too hard"}
 try:
     idx = json.load(open(sys.argv[1], encoding="utf-8"))
     entries = [e for e in (idx if isinstance(idx, list) else []) if isinstance(e, dict) and e.get("title_a")]
@@ -284,7 +294,17 @@ try:
         lb = " ".join(str(e.get("lang_b", "")).split())
         lvl = " ".join(str(e.get("level", "")).split())
         summary = " ".join(str(e.get("summary", "")).split())
-        meta = f"[{la}/{lb} {lvl}]" if (la or lb or lvl) else ""
+        # created is an ISO timestamp; show just the date the reader would read.
+        created = " ".join(str(e.get("created", "")).split())[:10]
+        rating = RATING_LABELS.get(e.get("rating"), "")
+        meta_bits = []
+        if la or lb or lvl:
+            meta_bits.append(f"{la}/{lb} {lvl}".strip())
+        if created:
+            meta_bits.append(created)
+        if rating:
+            meta_bits.append(f"rated {rating}")
+        meta = f"[{'; '.join(meta_bits)}]" if meta_bits else ""
         head = f"- id={sid} | {title_a} / {title_b} {meta}".rstrip()
         lines.append(f"{head}\n    {summary}" if summary else head)
     print("\n".join(lines) or "(no stories yet)")
@@ -366,12 +386,12 @@ if [ "$EARLY_CODE" = "200" ] && [ "$STORIES_INDEX" != "(no stories yet)" ]; then
       printf 'There is no specific request — a fresh, original story will be written. Return an empty list.\n\n'
     fi
     printf '## Library index (every existing story — metadata only)\n\n'
-    printf 'Each line is one existing story: its id, both titles, [languages level], and a one-line summary.\n\n'
+    printf 'Each line is one existing story, exactly as the reader sees it in the library list: its id, both titles, [languages level; created date; the reader'"'"'s difficulty rating if any], and a one-line summary.\n\n'
     printf '%s\n\n' "$STORIES_INDEX"
     printf '## Output\n\n'
     printf 'Output ONLY a single JSON object and nothing else, no prose, no markdown fences:\n'
     printf '{"relevant_ids": ["<id>", ...]}\n\n'
-    printf 'Use ONLY ids that appear VERBATIM in the index above. Pick the smallest set that answers the request — usually zero or one, never more than three. If nothing is clearly relevant, return {"relevant_ids": []}.\n'
+    printf 'Use ONLY ids that appear VERBATIM in the index above. Pick the smallest set that genuinely answers the request — usually zero or one; include more only when several existing stories are truly relevant (e.g. a series or recurring characters), and never more than six. If nothing is clearly relevant, return {"relevant_ids": []}.\n'
   } > "$SELECT_PROMPT_FILE"
 
   SELECT_RAW="$WORK_DIR/select.out"
@@ -479,8 +499,8 @@ for rid in requested:
         continue
     seen.add(rid)
     valid.append(rid)
-    if len(valid) >= 3:             # cap at ≤3 loaded stories
-        break
+    if len(valid) >= 6:             # cap at ≤6 loaded stories (context-bounded;
+        break                       # each loaded story inlines its FULL text)
 
 print(json.dumps(valid), end="")
 PY
@@ -556,7 +576,7 @@ PROMPT_FILE="$WORK_DIR/prompt.md"
     printf 'No specific request — write a fresh, original standalone story. Vary setting, genre, and mood from the recent library entries below; do not repeat a premise that already appears there.\n'
   fi
   printf '\n## Library index (every existing story — metadata only)\n\n'
-  printf 'Each line is one existing story: its id, both titles, [languages level], and a one-line summary. This is METADATA only — do NOT assume you know a story'"'"'s full content from its summary. You have NO file access; if you need a story'"'"'s full text it is inlined under "Stories to continue" below (the selection step already loaded the relevant ones).\n\n'
+  printf 'Each line is one existing story, exactly as the reader sees it in the library list: its id, both titles, [languages level; created date; the reader'"'"'s difficulty rating if any], and a one-line summary. This is METADATA only — do NOT assume you know a story'"'"'s full content from its summary. You have NO file access; if you need a story'"'"'s full text it is inlined under "Stories to continue" below (the selection step already loaded the relevant ones).\n\n'
   printf '%s\n' "$STORIES_INDEX"
   if [ -n "$LOADED_STORIES" ]; then
     printf '\n## Stories to continue (full text, loaded for you)\n\n'

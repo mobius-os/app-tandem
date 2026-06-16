@@ -1263,21 +1263,6 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
   background: color-mix(in srgb, var(--danger) 8%, transparent);
 }
 
-/* Generation variety chips */
-.tn-chips { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0 4px; }
-.tn-chip {
-  min-height: 36px; padding: 5px 13px; border-radius: 20px;
-  border: 1px solid var(--border); background: var(--surface);
-  color: var(--muted); font-size: 13px; font-weight: 600;
-  cursor: pointer; font-family: var(--font);
-  touch-action: manipulation; user-select: none;
-  transition: border-color 0.14s, color 0.14s, background 0.14s;
-}
-.tn-chip.is-active {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-  border-color: var(--accent); color: var(--accent);
-}
-@media (hover: hover) { .tn-chip:hover { border-color: var(--accent); color: var(--text); } }
 `
 
 // ---------------------------------------------------------------------------
@@ -1755,8 +1740,12 @@ function StoryReader({ story, onClose, onRate }) {
 // The prompt replaces the old Topic + Series/storyline + genre split (v0.10):
 // the reader types a single natural-language ask and the generation agent
 // interprets it (fresh story, or continue/sequel an existing one — loading the
-// relevant stories from the library itself). `recentTitle` is the newest
-// story's title, used to pre-write a "Continue ‘…’" example chip.
+// relevant stories from the library itself). We GUIDE the reader with example
+// phrasings in the textarea placeholder + a hint line below it (covering
+// classic / travel / daily-life / sci-fi / continue / sequel asks) rather than
+// clickable chips, so the prompt stays a single free-form field with no
+// structured mode-picker to tap. `recentTitle` is the newest story's title,
+// woven into the placeholder as a "continue <title>" example when there is one.
 // ---------------------------------------------------------------------------
 function GenerateSheet({ onGenerate, onCancel, initialLangA, initialLangB, initialLevel, recentTitle }) {
   const [promptInput, setPromptInput] = useState('')
@@ -1764,20 +1753,13 @@ function GenerateSheet({ onGenerate, onCancel, initialLangA, initialLangB, initi
   const [langB, setLangB] = useState(initialLangB || '')
   const [level, setLevel] = useState(CEFR_LEVELS.includes(initialLevel) ? initialLevel : 'B1')
 
-  // Example chips PRE-FILL the prompt (they are not exclusive modes). The first
-  // continues the most recent story when there is one; the rest seed common
-  // fresh-story asks. Tapping a chip drops its text into the textarea so the
-  // reader can edit it before generating.
-  const EXAMPLE_CHIPS = [
-    ...(recentTitle ? [{ label: `Continue “${recentTitle}”`, text: `Continue the story “${recentTitle}”` }] : []),
-    { label: 'A classic fable', text: 'A classic fable in the style of Aesop' },
-    { label: 'A sci-fi mystery', text: 'A sci-fi mystery' },
-    { label: 'Something funny', text: 'Something light and funny set in everyday life' },
-  ]
-
-  const handleChip = (text) => {
-    setPromptInput(text)
-  }
+  // Examples are TEXT, not buttons. The placeholder shows a couple of full
+  // phrasings; when there is a recent story we tail it with a context-aware
+  // "continue <that title>" example. The hint line below lists more genres in
+  // plain text the reader can copy the shape of.
+  const promptPlaceholder = recentTitle
+    ? `e.g. “a sci-fi mystery in a floating city”, or continue an earlier story: “continue “${recentTitle}”, but darker”`
+    : 'e.g. “a classic fable”, “a travel adventure in Japan”, or “a sci-fi mystery in a floating city”'
 
   const handleGenerate = () => {
     onGenerate({
@@ -1837,24 +1819,17 @@ function GenerateSheet({ onGenerate, onCancel, initialLangA, initialLangB, initi
             className="tn-textarea"
             value={promptInput}
             onChange={(e) => setPromptInput(e.target.value)}
-            placeholder="e.g. a sci-fi mystery in a floating city — or continue an earlier story: “continue the cartographer story, but darker”"
+            placeholder={promptPlaceholder}
             rows={3}
+            aria-describedby="tn-gen-prompt-hint"
           />
-          <p className="tn-setup-note" style={{ margin: '6px 0 0' }}>
-            Describe a fresh story, or ask to continue one you already have (by title or character). Leave blank to be surprised.
+          <p id="tn-gen-prompt-hint" className="tn-setup-note" style={{ margin: '6px 0 0' }}>
+            Describe whatever you like — for example: “a classic fable”, “a travel
+            adventure”, “a daily-life scene”, “a sci-fi mystery”, “continue{' '}
+            {recentTitle ? `“${recentTitle}”` : 'a recent story'}”, or “a sequel
+            to {recentTitle ? `“${recentTitle}”` : 'an earlier story'}”. Continue
+            or sequel by title or character. Leave blank to be surprised.
           </p>
-          <div className="tn-chips">
-            {EXAMPLE_CHIPS.map(({ label, text }) => (
-              <button
-                key={label}
-                type="button"
-                className="tn-chip"
-                onClick={() => handleChip(text)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
         </div>
         <div className="tn-sheet-actions">
           <button type="button" className="tn-btn tn-btn-secondary" onClick={onCancel}>Cancel</button>

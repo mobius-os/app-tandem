@@ -141,6 +141,20 @@ test('generate.sh builds a library index over EVERY story, not just the recent f
     'each index line must expose the story id')
 })
 
+test('the registry line exposes the SAME fields the reader sees on the library card', () => {
+  // v0.12 — the agent registry mirrors the user-facing library list: per story
+  // it must surface both titles, languages, level, the created date, AND the
+  // reader's difficulty rating (the card shows all of these), plus the summary.
+  // These are the fields the index-building python reads off each entry.
+  for (const field of ['title_a', 'title_b', 'lang_a', 'lang_b', 'level', 'created', 'rating', 'summary']) {
+    assert.ok(GENERATE_SH.includes(`e.get("${field}"`),
+      `the registry line must read the ${field} field the library card shows`)
+  }
+  // The rating is shown in the reader's own words, not the raw enum.
+  assert.ok(GENERATE_SH.includes('RATING_LABELS'),
+    'the registry must render the difficulty rating in human-readable words')
+})
+
 // v0.11 — SECURE two-pass, TOOL-FREE design. The agent gets ZERO filesystem
 // access: no --add-dir, no --allowedTools Read, no --permission-mode dontAsk on
 // EITHER pass. The "agent picks relevant stories" vision survives via a
@@ -184,8 +198,8 @@ test('generate.sh validates selected ids against the index and caps the load (se
     'the id-shape check must pin the UUID variant to v4')
   assert.ok(GENERATE_SH.includes('if rid not in known:'),
     'each selected id must be a member of THIS app\'s library index')
-  assert.ok(GENERATE_SH.includes('if len(valid) >= 3:'),
-    'the loaded-story set must be capped (≤3)')
+  assert.ok(GENERATE_SH.includes('if len(valid) >= 6:'),
+    'the loaded-story set must be capped (≤6)')
 })
 
 test('generate.sh — NOT the agent — loads the validated story files via the storage API', () => {

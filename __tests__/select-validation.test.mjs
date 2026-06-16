@@ -2,7 +2,7 @@
 //
 // The selection pass lets the agent return {"relevant_ids": [...]}; generate.sh
 // then validates each id (canonical UUID v4 + membership in THIS app's index +
-// cap ≤3) before loading any story file via the storage API. A string-match
+// cap ≤6) before loading any story file via the storage API. A string-match
 // test (`GENERATE_SH.includes('...')`) only proves the guard TEXT exists — not
 // that it FIRES. These tests EXECUTE the real validation block: we slice the
 // exact python heredoc out of the live generate.sh and run it with crafted
@@ -114,13 +114,22 @@ test('non-canonical forms (brace-wrapped, query/CRLF junk) are REJECTED', () => 
     'embedded newline + path must be rejected')
 })
 
-test('more than 3 valid in-index ids are CAPPED to 3', () => {
-  const ids = Array.from({ length: 5 }, (_, i) =>
+test('more than 6 valid in-index ids are CAPPED to 6', () => {
+  // v0.12 raised the loaded-story cap from 3 to 6 so the agent can reference a
+  // genuinely-relevant series; the membership + canonical-v4 gates are unchanged.
+  const ids = Array.from({ length: 8 }, (_, i) =>
     `${i.toString(16).padStart(8, '0')}-2222-4333-8444-555555555555`)
   const out = runValidator(ids.map((id) => ({ id })), ids)
-  assert.equal(out.length, 3, 'the loaded-story set must be capped at 3')
+  assert.equal(out.length, 6, 'the loaded-story set must be capped at 6')
   // and every survivor is one of the requested in-index ids
   for (const id of out) assert.ok(ids.includes(id), `unexpected id survived: ${id}`)
+})
+
+test('exactly 6 valid in-index ids all survive (boundary)', () => {
+  const ids = Array.from({ length: 6 }, (_, i) =>
+    `${i.toString(16).padStart(8, '0')}-2222-4333-8444-555555555555`)
+  const out = runValidator(ids.map((id) => ({ id })), ids)
+  assert.equal(out.length, 6, 'a set of exactly 6 in-index ids must all load')
 })
 
 test('a mixed adversarial payload keeps ONLY the in-index canonical v4 ids', () => {
