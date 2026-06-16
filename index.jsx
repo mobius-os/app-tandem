@@ -1390,7 +1390,10 @@ function clampScrollTargetToView(rawTarget, clientHeight, scrollHeight, margin =
 }
 
 function StoryReader({ story, onClose, onRate }) {
-  const [bLead, setBLead] = useState(false)
+  // The TARGET language (lang_b, the one being learned) leads by default — it
+  // sits in the top pane and titles, with the base language (lang_a) below as
+  // the translation aid. The toggle still lets a reader swap which leads.
+  const [bLead, setBLead] = useState(true)
   const [rating, setRating] = useState(story.rating || null)
   // The difficulty bar lives OUTSIDE the two language panes (it can't fairly
   // belong to either split). It appears once the reader reaches the end of an
@@ -1850,7 +1853,7 @@ function DeleteConfirmModal({ entry, busy, onConfirm, onCancel }) {
     <div className="tn-scrim" onClick={busy ? undefined : onCancel}
       role="dialog" aria-modal="true" aria-label="Confirm delete">
       <div className="tn-sheet" onClick={(e) => e.stopPropagation()}>
-        <p className="tn-sheet-title">Delete “{entry.title_a}”?</p>
+        <p className="tn-sheet-title">Delete “{entry.title_b}”?</p>
         <p className="tn-sheet-sub">
           This removes the story permanently. It cannot be undone.
         </p>
@@ -2311,15 +2314,15 @@ function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, onIndex
                   onClick={() => openStory(entry)}
                 >
                   <div className="tn-card-main">
-                    <div className="tn-card-title">{entry.title_a}</div>
-                    <div className="tn-card-sub">{entry.title_b} · {entry.lang_a} / {entry.lang_b}</div>
+                    <div className="tn-card-title">{entry.title_b}</div>
+                    <div className="tn-card-sub">{entry.title_a} · {entry.lang_b} / {entry.lang_a}</div>
                   </div>
                   <span className="tn-level-pill">{entry.level}</span>
                 </button>
                 <button
                   type="button"
                   className="tn-card-del"
-                  aria-label={`Delete ${entry.title_a}`}
+                  aria-label={`Delete ${entry.title_b}`}
                   onClick={() => setPendingDelete(entry)}
                 >
                   {TrashIcon}
@@ -2363,7 +2366,7 @@ function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, onIndex
           initialLangA={prefs.lang_a}
           initialLangB={prefs.lang_b}
           initialLevel={prefs.level}
-          recentTitle={(index && index[0] && index[0].title_a) || ''}
+          recentTitle={(index && index[0] && index[0].title_b) || ''}
         />
       )}
 
