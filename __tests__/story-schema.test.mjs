@@ -34,8 +34,9 @@ test('inlined schema in index.jsx stays in sync with story-schema.mjs', () => {
     "const CEFR_LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2']",
     'if (score > 0) return CEFR_LEVELS[Math.min(idx + 1, CEFR_LEVELS.length - 1)]',
     'if (score < 0) return CEFR_LEVELS[Math.max(idx - 1, 0)]',
-    "if (typeof entry.word_a === 'string' && entry.word_a.toLowerCase().includes(needle)) return true",
-    "if (typeof entry.word_b === 'string' && entry.word_b.toLowerCase().includes(needle)) return true",
+    "const needle = stripWordPunct(word).toLowerCase()",
+    "(typeof entry.word_a === 'string' && tokensOf(entry.word_a).includes(needle)) ||",
+    "(typeof entry.word_b === 'string' && tokensOf(entry.word_b).includes(needle)),",
     "const level = CEFR_LEVELS.includes(story.level) ? story.level : 'B1'",
     "id: story.id,",
     "if (paragraphs.length < 1) return null",
@@ -164,6 +165,61 @@ test('lookupGlossary returns null for empty/null input', () => {
 
 test('lookupGlossary returns null when glossary is missing', () => {
   assert.equal(lookupGlossary({ a: 'x', b: 'y' }, 'cat'), null)
+})
+
+// Whole-word matching: tapping a short word must NOT substring-hit a longer
+// unrelated glossary term. These are the reported mispairs from the field.
+const SUBSTRING_PARA = {
+  a: 'In a mill by the river there lived a tired miller.',
+  b: 'V mlinu ob reki je živel pospan mlinar.',
+  glossary: [
+    { word_a: 'miller', word_b: 'mlinar' },
+    { word_a: 'tired', word_b: 'pospanom' },
+  ],
+}
+
+test('lookupGlossary: tapping "a" does NOT return the "pospanom" entry (substring trap)', () => {
+  // "pospanom" contains "a"; the old substring match returned this entry.
+  assert.equal(lookupGlossary(SUBSTRING_PARA, 'a'), null)
+})
+
+test('lookupGlossary: tapping "mill" does NOT match "miller" (not a whole word)', () => {
+  // "miller"/"mlinar" both contain "mill" as a substring; whole-word must miss.
+  assert.equal(lookupGlossary(SUBSTRING_PARA, 'mill'), null)
+})
+
+test('lookupGlossary: tapping "In" does NOT match "mlinar" (substring trap)', () => {
+  // "mlinar" contains "in"; the old lowercase substring match returned it.
+  assert.equal(lookupGlossary(SUBSTRING_PARA, 'In'), null)
+})
+
+test('lookupGlossary: an exact whole-word tap returns its pair', () => {
+  const a = lookupGlossary(SUBSTRING_PARA, 'miller')
+  assert.ok(a)
+  assert.equal(a.word_b, 'mlinar')
+  const b = lookupGlossary(SUBSTRING_PARA, 'mlinar')
+  assert.ok(b)
+  assert.equal(b.word_a, 'miller')
+})
+
+test('lookupGlossary: a tap with adjacent punctuation still matches its whole word', () => {
+  // The render side strips punctuation; the lookup applies the same
+  // normalization so "miller," / "miller." resolve to the same token.
+  assert.equal(lookupGlossary(SUBSTRING_PARA, 'miller,').word_b, 'mlinar')
+  assert.equal(lookupGlossary(SUBSTRING_PARA, 'miller.').word_b, 'mlinar')
+})
+
+test('lookupGlossary: a token inside a multi-word term matches by whole word', () => {
+  const para = {
+    a: 'She sat down.',
+    b: 'Ella se sentó.',
+    glossary: [{ word_a: 'sat down', word_b: 'se sentó' }],
+  }
+  // Tapping a single constituent token of a multi-word term resolves the pair.
+  assert.equal(lookupGlossary(para, 'sat').word_b, 'se sentó')
+  assert.equal(lookupGlossary(para, 'sentó').word_a, 'sat down')
+  // But a substring of a token ("sent" within "sentó") must NOT match.
+  assert.equal(lookupGlossary(para, 'sent'), null)
 })
 
 // ---------------------------------------------------------------------------

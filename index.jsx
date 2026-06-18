@@ -41,12 +41,14 @@ function adaptLevel(currentLevel, feedbackHistory) {
 function lookupGlossary(para, word) {
   if (!para || !Array.isArray(para.glossary)) return null
   if (typeof word !== 'string' || !word.trim()) return null
-  const needle = word.trim().toLowerCase()
-  return para.glossary.find((entry) => {
-    if (typeof entry.word_a === 'string' && entry.word_a.toLowerCase().includes(needle)) return true
-    if (typeof entry.word_b === 'string' && entry.word_b.toLowerCase().includes(needle)) return true
-    return false
-  }) || null
+  const needle = stripWordPunct(word).toLowerCase()
+  if (!needle) return null
+  const tokensOf = (term) =>
+    String(term).split(/\s+/).map((w) => stripWordPunct(w).toLowerCase()).filter(Boolean)
+  return para.glossary.find((entry) =>
+    (typeof entry.word_a === 'string' && tokensOf(entry.word_a).includes(needle)) ||
+    (typeof entry.word_b === 'string' && tokensOf(entry.word_b).includes(needle)),
+  ) || null
 }
 
 function normalizeStory(story) {

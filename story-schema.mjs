@@ -4,6 +4,12 @@
 // CANONICAL SOURCE — edit here, then mirror the changes to the
 // ===== INLINE-SCHEMA START / END ===== block inside index.jsx.
 // __tests__/story-schema.test.mjs asserts the inlined copy stays in sync.
+//
+// lookupGlossary reuses the same punctuation-strip normalization the
+// highlight side uses (stripWordPunct from text-align.mjs). index.jsx
+// already inlines stripWordPunct in its INLINE-TEXT-ALIGN block, so the
+// inline copy of lookupGlossary calls it directly without this import.
+import { stripWordPunct } from './text-align.mjs'
 
 export const CEFR_LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2']
 
@@ -34,17 +40,24 @@ export function adaptLevel(currentLevel, feedbackHistory) {
 }
 
 // Find the glossary entry for a given word in paragraph `para`.
-// Matches case-insensitively against both word_a and word_b.
+// Matches a tapped word against glossary terms by WHOLE-WORD token equality
+// (not substring) so a short word never collides with a longer unrelated
+// term — tapping "a" must not hit "pospanom", tapping "mill" must not hit
+// "miller". Multi-word terms (e.g. "se sentó") match if any of their tokens
+// equals the needle. Uses the same stripWordPunct normalization as the
+// highlight side, so "word," and "word." resolve to the same token.
 // Returns the matching glossary entry object, or null.
 export function lookupGlossary(para, word) {
   if (!para || !Array.isArray(para.glossary)) return null
   if (typeof word !== 'string' || !word.trim()) return null
-  const needle = word.trim().toLowerCase()
-  return para.glossary.find((entry) => {
-    if (typeof entry.word_a === 'string' && entry.word_a.toLowerCase().includes(needle)) return true
-    if (typeof entry.word_b === 'string' && entry.word_b.toLowerCase().includes(needle)) return true
-    return false
-  }) || null
+  const needle = stripWordPunct(word).toLowerCase()
+  if (!needle) return null
+  const tokensOf = (term) =>
+    String(term).split(/\s+/).map((w) => stripWordPunct(w).toLowerCase()).filter(Boolean)
+  return para.glossary.find((entry) =>
+    (typeof entry.word_a === 'string' && tokensOf(entry.word_a).includes(needle)) ||
+    (typeof entry.word_b === 'string' && tokensOf(entry.word_b).includes(needle)),
+  ) || null
 }
 
 // Validate a parsed story object, returning a normalized version or null.
