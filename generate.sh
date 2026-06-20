@@ -46,17 +46,6 @@
 set -uo pipefail
 
 APP_ID="${1:-}"
-if [ -z "$APP_ID" ]; then
-  echo "generate.sh: APP_ID required" >&2
-  exit 2
-fi
-case "$APP_ID" in
-  *[!0-9]*)
-    echo "generate.sh: APP_ID must be numeric" >&2
-    exit 2
-    ;;
-esac
-
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
 NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 LOG_DIR=/data/cron-logs
@@ -64,7 +53,9 @@ LOG_FILE="$LOG_DIR/tandem.log"
 LOCK_FILE="$LOG_DIR/tandem-$APP_ID.lock"
 TANDEM_TIMEOUT="${TANDEM_TIMEOUT:-300}"
 WORK_DIR=$(mktemp -d -t app-tandem.XXXXXX)
-trap 'rm -rf "$WORK_DIR"' EXIT
+RUN_SUCCEEDED=0
+FAIL_REASON=""
+SERVICE_TOKEN=""
 
 mkdir -p "$LOG_DIR"
 
@@ -72,22 +63,106 @@ log() {
   echo "[$NOW] $*" >> "$LOG_FILE"
 }
 
+failure_context_available() {
+  case "${APP_ID:-}" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  [ -n "${SERVICE_TOKEN:-}" ]
+}
+
+write_failure_marker() {
+  failure_context_available || return 0
+  local reason="$1"
+  local payload="$WORK_DIR/generation-failed.json"
+
+  MESSAGE="$reason" python3 - "$payload" <<'PY' || return 0
+import json
+import os
+import sys
+
+with open(sys.argv[1], "w", encoding="utf-8") as f:
+    json.dump({"message": os.environ.get("MESSAGE") or "Generation failed."}, f, ensure_ascii=False)
+PY
+
+  local code
+  code=$(curl -sS -o /dev/null -w "%{http_code}" \
+    -X PUT "$API_BASE_URL/api/storage/apps/$APP_ID/generation-failed.json" \
+    -H "Authorization: Bearer $SERVICE_TOKEN" \
+    -H "Content-Type: application/json" \
+    --data-binary @"$payload") || code=000
+  if [ "$code" != "200" ] && [ "$code" != "201" ] && [ "$code" != "204" ]; then
+    log "WARN: failed to write generation-failed.json (HTTP $code)"
+  fi
+}
+
+send_failure_notification() {
+  failure_context_available || return 0
+  local reason="$1"
+  local payload="$WORK_DIR/failure-notification.json"
+
+  MESSAGE="$reason" APP_ID="$APP_ID" python3 - "$payload" <<'PY' || return 0
+import json
+import os
+import sys
+
+app_id = os.environ["APP_ID"]
+payload = {
+    "title": "Tandem: story generation failed",
+    "body": os.environ.get("MESSAGE") or "Generation failed.",
+    "source_type": "app",
+    "source_id": app_id,
+    "target": f"/shell/?app={app_id}",
+}
+with open(sys.argv[1], "w", encoding="utf-8") as f:
+    json.dump(payload, f, ensure_ascii=False)
+PY
+
+  curl -sS -X POST "$API_BASE_URL/api/notifications/send" \
+    -H "Authorization: Bearer $SERVICE_TOKEN" \
+    -H "Content-Type: application/json" \
+    --data-binary @"$payload" >> "$LOG_FILE" 2>&1 || true
+}
+
+finish_generation() {
+  local code="$1"
+  if [ "$RUN_SUCCEEDED" != "1" ] && [ "$code" -ne 0 ]; then
+    local reason="${FAIL_REASON:-Tandem story generation failed (exit $code).}"
+    write_failure_marker "$reason"
+    send_failure_notification "$reason"
+  fi
+  rm -rf "$WORK_DIR"
+}
+
+trap 'finish_generation $?' EXIT
+
+fail() {
+  FAIL_REASON="$1"
+  log "ERROR: $FAIL_REASON"
+  exit "${2:-1}"
+}
+
+if [ -z "$APP_ID" ]; then
+  fail "APP_ID required." 2
+fi
+case "$APP_ID" in
+  *[!0-9]*)
+    fail "APP_ID must be numeric." 2
+    ;;
+esac
+
 log "Starting story generation for app_id=$APP_ID"
 
 exec 9>"$LOCK_FILE"
 if ! flock -n 9; then
-  log "Another tandem generation is already active; skipping."
-  exit 5
+  fail "Another tandem generation is already active." 5
 fi
 
 if [ ! -r /data/service-token.txt ]; then
-  log "ERROR: /data/service-token.txt missing or unreadable"
-  exit 1
+  fail "/data/service-token.txt missing or unreadable."
 fi
 SERVICE_TOKEN=$(cat /data/service-token.txt)
 if [ -z "$SERVICE_TOKEN" ]; then
-  log "ERROR: /data/service-token.txt is empty"
-  exit 1
+  fail "/data/service-token.txt is empty."
 fi
 
 # 1. Read system-prompt.md (baked schema).
@@ -96,8 +171,7 @@ SYS_CODE=$(curl -sS -o "$SYSTEM_FILE" -w "%{http_code}" \
   -H "Authorization: Bearer $SERVICE_TOKEN" \
   "$API_BASE_URL/api/storage/apps/$APP_ID/system-prompt.md") || SYS_CODE=000
 if [ "$SYS_CODE" != "200" ]; then
-  log "ERROR: could not fetch system-prompt.md (HTTP $SYS_CODE)"
-  exit 1
+  fail "Could not fetch system-prompt.md (HTTP $SYS_CODE)."
 fi
 
 # 2. Read prefs.json for language pair, level, feedback history, free-form prompt.
@@ -755,17 +829,7 @@ for ATTEMPT_MODEL in ${GEN_MODEL:+"$GEN_MODEL"} ""; do
 done
 
 if [ -z "$STORY_ID" ]; then
-  curl -sS -X POST "$API_BASE_URL/api/notifications/send" \
-    -H "Authorization: Bearer $SERVICE_TOKEN" \
-    -H "Content-Type: application/json" \
-    -d "{
-      \"title\": \"Tandem: story generation failed\",
-      \"body\": \"$FAIL_BODY\",
-      \"source_type\": \"app\",
-      \"source_id\": \"$APP_ID\",
-      \"target\": \"/shell/?app=$APP_ID\"
-    }" >> "$LOG_FILE" 2>&1
-  exit 1
+  fail "${FAIL_BODY:-The story generator did not produce a story. Try again.}"
 fi
 
 # 7. PUT stories/<id>.json to storage.
@@ -777,8 +841,7 @@ PUT_CODE=$(curl -sS -o /dev/null -w "%{http_code}" \
   --data-binary @"$STORY_FILE") || PUT_CODE=000
 
 if [ "$PUT_CODE" != "200" ] && [ "$PUT_CODE" != "201" ] && [ "$PUT_CODE" != "204" ]; then
-  log "ERROR: failed to save story (HTTP $PUT_CODE)"
-  exit 1
+  fail "Failed to save story (HTTP $PUT_CODE)."
 fi
 
 log "Saved story $STORY_ID (level=$LEVEL)"
@@ -873,3 +936,4 @@ curl -sS -X POST "$API_BASE_URL/api/notifications/send" \
   }" >> "$LOG_FILE" 2>&1
 
 log "Done."
+RUN_SUCCEEDED=1
