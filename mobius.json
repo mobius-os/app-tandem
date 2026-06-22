@@ -1,7 +1,7 @@
 {
   "id": "tandem",
   "name": "Tandem",
-  "version": "0.12.3",
+  "version": "0.12.4",
   "description": "Split-pane bilingual reader for language learning. Top and bottom panes show each language independently with sync-scroll; drag the slim divider to resize. Choose languages and level, then describe the story you want in one free-form prompt — ask for a fresh story or to continue an earlier one (the generation agent loads the relevant stories itself). Pick the generation agent (Claude or OpenAI Codex) in settings; tap any word to highlight it, its sentence, and its translation inline in both panes.",
   "offline_capable": true,
   "author": "mobius-os",

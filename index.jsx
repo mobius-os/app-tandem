@@ -1741,6 +1741,73 @@ function StoryReader({ story, onClose, onRate }) {
 }
 
 // ---------------------------------------------------------------------------
+// useModalFocus — the shared focus contract for every .tn-scrim dialog. Mobius
+// mini-apps run sandboxed with no native dialog, so each sheet is a plain DOM
+// overlay that must manage focus itself: capture the opener at open, move focus
+// into the dialog, trap Tab inside it, close on Escape, and restore the opener
+// on unmount. `active` lets a destructive sheet block close while a delete is
+// in flight (Escape and the focusable set must respect that). `focusFirst`
+// chooses the landing control: 'cancel'/'done' for a button the caller refs,
+// 'auto' for the dialog's first focusable. The focusable set is recomputed per
+// keydown because disabled state (busy) changes which controls are tabbable.
+// ---------------------------------------------------------------------------
+function useModalFocus(containerRef, { onClose, allowClose = true, initialFocusRef } = {}) {
+  // Capture the opener once, at mount, before focus moves into the dialog — it
+  // is the element focus returns to on close. A ref (not state) so it survives
+  // every render without becoming a dependency.
+  const openerRef = useRef(null)
+
+  useEffect(() => {
+    openerRef.current = document.activeElement
+    const landing = initialFocusRef?.current
+      || containerRef.current?.querySelector(
+        'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      )
+    landing?.focus()
+    return () => {
+      const opener = openerRef.current
+      if (opener && typeof opener.focus === 'function' && document.contains(opener)) {
+        opener.focus()
+      }
+    }
+    // Mount-only: the opener and initial focus are established once per open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Escape closes; Tab is trapped to the dialog's focusable set so focus can't
+  // wander to the inert surface behind the scrim. Recomputed per keydown rather
+  // than cached: a sheet's controls (and their disabled state) change with the
+  // in-flight busy state, so a cached list would trap against stale nodes.
+  const onKeyDown = useCallback((e) => {
+    if (e.key === 'Escape') {
+      if (allowClose) onClose()
+      return
+    }
+    if (e.key !== 'Tab') return
+    const focusable = containerRef.current?.querySelectorAll(
+      'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    )
+    if (!focusable || focusable.length === 0) {
+      // Everything is disabled (mid-action) — keep focus pinned in-dialog.
+      e.preventDefault()
+      return
+    }
+    const first = focusable[0]
+    const last = focusable[focusable.length - 1]
+    const activeEl = document.activeElement
+    if (e.shiftKey && activeEl === first) {
+      e.preventDefault()
+      last.focus()
+    } else if (!e.shiftKey && activeEl === last) {
+      e.preventDefault()
+      first.focus()
+    }
+  }, [containerRef, onClose, allowClose])
+
+  return onKeyDown
+}
+
+// ---------------------------------------------------------------------------
 // GenerateSheet — bottom sheet for the ONE free-form prompt + languages/level.
 // The prompt replaces the old Topic + Series/storyline + genre split (v0.10):
 // the reader types a single natural-language ask and the generation agent
@@ -1753,6 +1820,8 @@ function StoryReader({ story, onClose, onRate }) {
 // woven into the placeholder as a "continue <title>" example when there is one.
 // ---------------------------------------------------------------------------
 function GenerateSheet({ onGenerate, onCancel, initialLangA, initialLangB, initialLevel, recentTitle }) {
+  const sheetRef = useRef(null)
+  const onKeyDown = useModalFocus(sheetRef, { onClose: onCancel })
   const [promptInput, setPromptInput] = useState('')
   const [langA, setLangA] = useState(initialLangA || 'English')
   const [langB, setLangB] = useState(initialLangB || '')
@@ -1776,9 +1845,10 @@ function GenerateSheet({ onGenerate, onCancel, initialLangA, initialLangB, initi
   }
 
   return (
-    <div className="tn-scrim" onClick={onCancel} role="dialog" aria-modal="true" aria-label="Generate story">
-      <div className="tn-sheet" onClick={(e) => e.stopPropagation()}>
-        <p className="tn-sheet-title">Generate a story</p>
+    <div className="tn-scrim" onClick={onCancel} role="dialog" aria-modal="true"
+      aria-labelledby="tn-gen-title" onKeyDown={onKeyDown}>
+      <div className="tn-sheet" ref={sheetRef} onClick={(e) => e.stopPropagation()}>
+        <p className="tn-sheet-title" id="tn-gen-title">Generate a story</p>
         <div>
           <label className="tn-setup-label" htmlFor="tn-gen-lang-a">Language you know</label>
           <input
@@ -1851,16 +1921,24 @@ function GenerateSheet({ onGenerate, onCancel, initialLangA, initialLangB, initi
 // own confirmation.
 // ---------------------------------------------------------------------------
 function DeleteConfirmModal({ entry, busy, onConfirm, onCancel }) {
+  const sheetRef = useRef(null)
+  const cancelRef = useRef(null)
+  // Cancel is the safe landing for a destructive confirm; Escape and the
+  // backdrop are blocked while the delete is in flight so a stray key can't
+  // race the request (mirrors the busy-guarded backdrop onClick).
+  const onKeyDown = useModalFocus(sheetRef, {
+    onClose: onCancel, allowClose: !busy, initialFocusRef: cancelRef,
+  })
   return (
     <div className="tn-scrim" onClick={busy ? undefined : onCancel}
-      role="dialog" aria-modal="true" aria-label="Confirm delete">
-      <div className="tn-sheet" onClick={(e) => e.stopPropagation()}>
-        <p className="tn-sheet-title">Delete “{entry.title_b}”?</p>
+      role="dialog" aria-modal="true" aria-labelledby="tn-delete-title" onKeyDown={onKeyDown}>
+      <div className="tn-sheet" ref={sheetRef} onClick={(e) => e.stopPropagation()}>
+        <p className="tn-sheet-title" id="tn-delete-title">Delete “{entry.title_b}”?</p>
         <p className="tn-sheet-sub">
           This removes the story permanently. It cannot be undone.
         </p>
         <div className="tn-sheet-actions">
-          <button type="button" className="tn-btn tn-btn-secondary"
+          <button type="button" className="tn-btn tn-btn-secondary" ref={cancelRef}
             onClick={onCancel} disabled={busy}>Cancel</button>
           <button type="button" className="tn-btn tn-btn-danger"
             onClick={onConfirm} disabled={busy}>
@@ -1882,6 +1960,11 @@ function DeleteConfirmModal({ entry, busy, onConfirm, onCancel }) {
 // degrades to FALLBACK_GROUPS / "Default only" — never blocks anything.
 // ---------------------------------------------------------------------------
 function SettingsSheet({ token, prefs, onSelectModel, onClose }) {
+  const sheetRef = useRef(null)
+  const doneRef = useRef(null)
+  // Land on Done, not the first model radio: this is a settings surface, not
+  // a prompt for a choice, so the safe exit should hold focus (parallels news).
+  const onKeyDown = useModalFocus(sheetRef, { onClose, initialFocusRef: doneRef })
   const storedProvider = normalizeGenProvider(prefs)
   const storedModel = normalizeGenModel(prefs)
   // null = still loading; otherwise the provider groups (FALLBACK_GROUPS or the
@@ -1941,9 +2024,10 @@ function SettingsSheet({ token, prefs, onSelectModel, onClose }) {
   }
 
   return (
-    <div className="tn-scrim" onClick={onClose} role="dialog" aria-modal="true" aria-label="Settings">
-      <div className="tn-sheet" onClick={(e) => e.stopPropagation()}>
-        <p className="tn-sheet-title">Settings</p>
+    <div className="tn-scrim" onClick={onClose} role="dialog" aria-modal="true"
+      aria-labelledby="tn-settings-title" onKeyDown={onKeyDown}>
+      <div className="tn-sheet" ref={sheetRef} onClick={(e) => e.stopPropagation()}>
+        <p className="tn-sheet-title" id="tn-settings-title">Settings</p>
         <div>
           <div className="tn-setup-label">Story generation agent</div>
           <p className="tn-setup-note">
@@ -1998,7 +2082,7 @@ function SettingsSheet({ token, prefs, onSelectModel, onClose }) {
           )}
         </div>
         <div className="tn-sheet-actions">
-          <button type="button" className="tn-btn tn-btn-primary" onClick={onClose}>Done</button>
+          <button type="button" className="tn-btn tn-btn-primary" ref={doneRef} onClick={onClose}>Done</button>
         </div>
       </div>
     </div>
