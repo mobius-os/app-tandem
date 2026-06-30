@@ -23,38 +23,6 @@ import {
 const HERE = dirname(fileURLToPath(import.meta.url))
 
 // ---------------------------------------------------------------------------
-// Sync guard: index.jsx ships an INLINED copy of these helpers (same pattern
-// as story-schema). Assert the distinctive lines appear verbatim.
-// ---------------------------------------------------------------------------
-test('inlined gen-model helpers in index.jsx stay in sync with gen-model.mjs', () => {
-  const norm = (s) => s.replace(/\s+/g, ' ')
-  const index = norm(readFileSync(join(HERE, '..', 'index.jsx'), 'utf8'))
-  const distinctive = [
-    "const DEFAULT_MODEL_ID = ''",
-    "const DEFAULT_PROVIDER = ''",
-    'const CONCRETE_DEFAULT_PROVIDER = FALLBACK_GROUPS[0].key',
-    'const CONCRETE_DEFAULT_MODEL_ID = FALLBACK_GROUPS[0].models[0].id',
-    'return model === \'\' || model.toLowerCase() === \'default\'',
-    'if (!needsGenPrefsMigration(prefs)) return prefs',
-    'gen_provider: CONCRETE_DEFAULT_PROVIDER,',
-    'gen_model: CONCRETE_DEFAULT_MODEL_ID,',
-    "{ key: 'claude', label: 'Claude Code' },",
-    "{ key: 'codex', label: 'OpenAI Codex' },",
-    "if (typeof v !== 'string') return DEFAULT_MODEL_ID",
-    "if (t === 'claude' || t === 'codex') return t",
-    "return normalizeGenModel(prefs) ? 'claude' : DEFAULT_PROVIDER",
-    'const rows = Array.isArray(payload[meta.key]) ? payload[meta.key] : null',
-    '.map((r) => ({ id: r.id, name: r.name || r.id })),',
-  ]
-  for (const snippet of distinctive) {
-    assert.ok(
-      index.includes(norm(snippet)),
-      `index.jsx inline drifted: missing "${snippet}"`,
-    )
-  }
-})
-
-// ---------------------------------------------------------------------------
 // normalizeGenModel — the LENIENT-READ contract. Prefs written by any past
 // version (no gen_model key) and any malformed value must read as Default.
 // ---------------------------------------------------------------------------

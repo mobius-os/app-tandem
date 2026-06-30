@@ -9,6 +9,7 @@
   "homepage": "https://github.com/mobius-os/app-tandem",
   "icon": "icon.png",
   "entry": "index.jsx",
+  "source_files": ["story-schema.mjs","text-align.mjs","gen-model.mjs","scroll-sync.mjs","constants.js","theme.js","storage.js","ui/useModalFocus.js","ui/Icons.jsx","ui/ParaText.jsx","ui/StoryReader.jsx","ui/GenerateSheet.jsx","ui/DeleteConfirmModal.jsx","ui/SettingsSheet.jsx","ui/LibraryTab.jsx","ui/SetupView.jsx"],
   "theme_color": "#0c0f14",
   "background_color": "#0c0f14",
   "permissions": {

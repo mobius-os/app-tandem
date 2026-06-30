@@ -3,9 +3,6 @@
 // (No loader needed — story-schema.mjs is React-free.)
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
-import { dirname, join } from 'node:path'
 import {
   CEFR_LEVELS,
   STORY_RATINGS,
@@ -18,46 +15,6 @@ import {
   totalGlossaryCount,
   meetsContentBar,
 } from '../story-schema.mjs'
-
-const HERE = dirname(fileURLToPath(import.meta.url))
-
-// ---------------------------------------------------------------------------
-// Sync guard: index.jsx ships an INLINED copy of these helpers. If the
-// canonical source changes but the inline doesn't, the shipped app silently
-// diverges. Assert that the distinctive function bodies appear verbatim
-// (whitespace-normalised) inside index.jsx.
-// ---------------------------------------------------------------------------
-test('inlined schema in index.jsx stays in sync with story-schema.mjs', () => {
-  const norm = (s) => s.replace(/\s+/g, ' ')
-  const index = norm(readFileSync(join(HERE, '..', 'index.jsx'), 'utf8'))
-  const distinctive = [
-    "const CEFR_LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2']",
-    'if (score > 0) return CEFR_LEVELS[Math.min(idx + 1, CEFR_LEVELS.length - 1)]',
-    'if (score < 0) return CEFR_LEVELS[Math.max(idx - 1, 0)]',
-    "const needle = stripWordPunct(word).toLowerCase()",
-    "(typeof entry.word_a === 'string' && tokensOf(entry.word_a).includes(needle)) ||",
-    "(typeof entry.word_b === 'string' && tokensOf(entry.word_b).includes(needle)),",
-    "const level = CEFR_LEVELS.includes(story.level) ? story.level : 'B1'",
-    "id: story.id,",
-    "if (paragraphs.length < 1) return null",
-    "return story.paragraphs.reduce((n, p) => n + (Array.isArray(p.glossary) ? p.glossary.length : 0), 0)",
-    "return story.paragraphs.length >= 10 && totalGlossaryCount(story) >= 15",
-    "const STORY_RATINGS = ['too_simple', 'just_right', 'too_complex']",
-    "if (STORY_RATINGS.includes(story.rating)) normalized.rating = story.rating",
-    "return index.filter((e) => !(e && typeof e === 'object' && e.id === storyId))",
-    "e && typeof e === 'object' && e.id === storyId ? { ...e, rating: verdict } : e,",
-    // v0.9.0 summary handling — guard the new normalizeStory + buildIndexEntry lines.
-    "const summary = typeof story.summary === 'string' ? story.summary.trim() : ''",
-    "if (summary) normalized.summary = summary",
-    "summary: story.summary || '',",
-  ]
-  for (const snippet of distinctive) {
-    assert.ok(
-      index.includes(norm(snippet)),
-      `index.jsx inline drifted: missing "${snippet}"`,
-    )
-  }
-})
 
 // ---------------------------------------------------------------------------
 // CEFR_LEVELS

@@ -28,11 +28,13 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 // Guard: the state machine below models useStoryIndex.mutate. If the real hook
 // drops the serialize-and-fresh-read contract, this assertion fails so the
 // tests can't silently pass against a parallel re-implementation while the
-// shipped app regresses.
-test('index.jsx routes index writes through serialized fresh-read mutate', () => {
-  const src = readFileSync(join(HERE, '..', 'index.jsx'), 'utf8')
-  const norm = src.replace(/\s+/g, ' ')
-  const required = [
+// shipped app regresses. After the index.jsx modularization, useStoryIndex
+// lives in storage.js and the two client mutate() call sites live in
+// ui/LibraryTab.jsx, so the contract is asserted across both files.
+test('the app routes index writes through serialized fresh-read mutate', () => {
+  const storage = readFileSync(join(HERE, '..', 'storage.js'), 'utf8').replace(/\s+/g, ' ')
+  const library = readFileSync(join(HERE, '..', 'ui', 'LibraryTab.jsx'), 'utf8').replace(/\s+/g, ' ')
+  const storageRequired = [
     'function useStoryIndex(',
     // mutate re-reads fresh inside the queue, refuses a failed read, then PUTs.
     'const fresh = await readFresh()',
@@ -42,14 +44,22 @@ test('index.jsx routes index writes through serialized fresh-read mutate', () =>
     "return res.status === 404 ? [] : null",
     // the chain stays alive past a failure.
     'chainRef.current = run.catch(() => {})',
+  ]
+  for (const snippet of storageRequired) {
+    assert.ok(
+      storage.includes(snippet.replace(/\s+/g, ' ')),
+      `storage.js is missing the serialized-mutate contract: "${snippet}"`,
+    )
+  }
+  const libraryRequired = [
     // both client mutations go through mutate, not a stale in-memory transform.
     'await mutateIndex((fresh) => setRatingInIndex(fresh, story.id, verdict))',
     'await mutateIndex((fresh) => removeStoryFromIndex(fresh, entry.id))',
   ]
-  for (const snippet of required) {
+  for (const snippet of libraryRequired) {
     assert.ok(
-      norm.includes(snippet.replace(/\s+/g, ' ')),
-      `index.jsx is missing the serialized-mutate contract: "${snippet}"`,
+      library.includes(snippet.replace(/\s+/g, ' ')),
+      `ui/LibraryTab.jsx is missing the serialized-mutate contract: "${snippet}"`,
     )
   }
 })

@@ -2,9 +2,6 @@
 //   node --test __tests__/text-align.test.mjs
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
-import { dirname, join } from 'node:path'
 import {
   tokenizeParagraph,
   sentenceCount,
@@ -12,32 +9,6 @@ import {
   stripWordPunct,
   findPhraseTokenRange,
 } from '../text-align.mjs'
-
-const HERE = dirname(fileURLToPath(import.meta.url))
-
-// ---------------------------------------------------------------------------
-// Sync guard: index.jsx ships an INLINED copy of these helpers (the installer
-// compiles only the entry file). Assert distinctive snippets appear verbatim
-// (whitespace-normalised) inside index.jsx.
-// ---------------------------------------------------------------------------
-test('inlined text-align in index.jsx stays in sync with text-align.mjs', () => {
-  const norm = (s) => s.replace(/\s+/g, ' ')
-  const index = norm(readFileSync(join(HERE, '..', 'index.jsx'), 'utf8'))
-  const distinctive = [
-    "tokens.push({ text: part, isWord, wordIdx: isWord ? wordIdx : -1, sentIdx })",
-    "if (SENTENCE_END_RE.test(part)) sentIdx += 1",
-    "if (!Number.isInteger(dstCount) || dstCount < 1) return -1",
-    "return Math.min(srcIdx, dstCount - 1)",
-    "return token.replace(/^[^\\p{L}\\p{N}]+|[^\\p{L}\\p{N}]+$/gu, '')",
-    "return { start: words[i].wordIdx, end: words[i + target.length - 1].wordIdx }",
-  ]
-  for (const snippet of distinctive) {
-    assert.ok(
-      index.includes(norm(snippet)),
-      `index.jsx inline drifted: missing "${snippet}"`,
-    )
-  }
-})
 
 // ---------------------------------------------------------------------------
 // tokenizeParagraph
