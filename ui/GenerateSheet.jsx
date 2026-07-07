@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react'
 import { CEFR_LEVELS } from '../story-schema.mjs'
 import { useModalFocus } from './useModalFocus.js'
+import { useShellBackTarget } from './useShellBackTarget.js'
 
 // ---------------------------------------------------------------------------
 // GenerateSheet — bottom sheet for the ONE free-form prompt + languages/level.
@@ -17,6 +18,7 @@ import { useModalFocus } from './useModalFocus.js'
 export function GenerateSheet({ onGenerate, onCancel, initialLangA, initialLangB, initialLevel, recentTitle }) {
   const sheetRef = useRef(null)
   const onKeyDown = useModalFocus(sheetRef, { onClose: onCancel })
+  useShellBackTarget('tandem-generate-sheet', onCancel)
   const [promptInput, setPromptInput] = useState('')
   const [langA, setLangA] = useState(initialLangA || 'English')
   const [langB, setLangB] = useState(initialLangB || '')

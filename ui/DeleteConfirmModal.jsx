@@ -1,5 +1,6 @@
 import { useRef } from 'react'
 import { useModalFocus } from './useModalFocus.js'
+import { useShellBackTarget } from './useShellBackTarget.js'
 
 // ---------------------------------------------------------------------------
 // DeleteConfirmModal — browser modal dialogs (window.confirm) silently no-op
@@ -15,6 +16,7 @@ export function DeleteConfirmModal({ entry, busy, onConfirm, onCancel }) {
   const onKeyDown = useModalFocus(sheetRef, {
     onClose: onCancel, allowClose: !busy, initialFocusRef: cancelRef,
   })
+  useShellBackTarget('tandem-delete-modal', onCancel, { enabled: !busy })
   return (
     <div className="tn-scrim" onClick={busy ? undefined : onCancel}
       role="dialog" aria-modal="true" aria-labelledby="tn-delete-title" onKeyDown={onKeyDown}>

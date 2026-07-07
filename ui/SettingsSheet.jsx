@@ -3,6 +3,7 @@ import { FALLBACK_GROUPS, normalizeGenProvider, normalizeGenModel, buildProvider
 import { loadProviderModels, loadProviderStatus } from '../storage.js'
 import { signalError } from '../signals.js'
 import { useModalFocus } from './useModalFocus.js'
+import { useShellBackTarget } from './useShellBackTarget.js'
 
 // ---------------------------------------------------------------------------
 // SettingsSheet — the app's one settings surface (everything else moved into
@@ -19,6 +20,7 @@ export function SettingsSheet({ token, prefs, onSelectModel, onClose }) {
   // Land on Done, not the first model radio: this is a settings surface, not
   // a prompt for a choice, so the safe exit should hold focus (parallels news).
   const onKeyDown = useModalFocus(sheetRef, { onClose, initialFocusRef: doneRef })
+  useShellBackTarget('tandem-settings-sheet', onClose)
   const storedProvider = normalizeGenProvider(prefs)
   const storedModel = normalizeGenModel(prefs)
   // null = still loading; otherwise the provider groups (FALLBACK_GROUPS or the
