@@ -9,6 +9,7 @@ import {
   savePrefs,
 } from './storage.js'
 import { migrateGenPrefs } from './gen-model.mjs'
+import { signal } from './signals.js'
 import { GearIcon } from './ui/Icons.jsx'
 import { LibraryTab } from './ui/LibraryTab.jsx'
 import { SettingsSheet } from './ui/SettingsSheet.jsx'
@@ -65,6 +66,7 @@ export default function App({ appId, token }) {
       const migrated = migrateGenPrefs(loadedPrefs)
       setPrefs(migrated)
       setIndex(entries)
+      signal('app_ready', { item_count: entries.length })
       if (migrated !== loadedPrefs) {
         savePrefs(appId, token, migrated).catch(() => {})
       }

@@ -10,6 +10,7 @@
 // ---------------------------------------------------------------------------
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { normalizeStory } from './story-schema.mjs'
+import { signal, signalError } from './signals.js'
 
 export function getRuntimeStorage() {
   return (typeof window !== 'undefined' && window.mobius?.storage) || null
@@ -29,14 +30,20 @@ export async function getJSON(url, token, appId) {
       const data = await native.get(path)
       if (data === null || data === undefined) return { ok: false, status: 404 }
       return { ok: true, data }
-    } catch { /* fall through */ }
+    } catch {
+      signalError('Storage cache read failed.', 'storage.get')
+    }
   }
   try {
     const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
     if (!r.ok) return { ok: false, status: r.status }
     try { return { ok: true, data: await r.json() } }
-    catch { return { ok: false, status: 500 } }
+    catch {
+      signalError('Storage response was not valid JSON.', 'storage.get')
+      return { ok: false, status: 500 }
+    }
   } catch {
+    signalError('Storage read failed.', 'storage.get')
     return { ok: false, status: 0 }
   }
 }
@@ -46,7 +53,9 @@ export async function putJSON(url, token, obj, appId) {
   const native = path ? getRuntimeStorage() : null
   if (native && typeof native.set === 'function') {
     try { return await native.set(path, obj) }
-    catch { /* fall through */ }
+    catch {
+      signalError('Storage cache write failed.', 'storage.put')
+    }
   }
   try {
     const r = await fetch(url, {
@@ -57,6 +66,7 @@ export async function putJSON(url, token, obj, appId) {
     if (r.ok) return { synced: true }
     return { ok: false, status: r.status }
   } catch {
+    signalError('Storage write failed.', 'storage.put')
     return { ok: false, status: 0 }
   }
 }
@@ -68,7 +78,9 @@ export async function deleteJSON(url, token, appId) {
     const fn = native.remove || native.del
     if (typeof fn === 'function') {
       try { await fn.call(native, path); return { ok: true } }
-      catch { /* fall through */ }
+      catch {
+        signalError('Storage cache delete failed.', 'storage.delete')
+      }
     }
   }
   try {
@@ -79,6 +91,7 @@ export async function deleteJSON(url, token, appId) {
     // 404 counts as deleted — the file is gone either way.
     return { ok: r.ok || r.status === 404, status: r.status }
   } catch {
+    signalError('Storage delete failed.', 'storage.delete')
     return { ok: false, status: 0 }
   }
 }
@@ -210,9 +223,17 @@ export function useGeneration({ appId, token, onStoryReady }) {
   // Ends the run in the error phase and clears the pending record so the next
   // attempt starts clean. The pending record is cleared but the failure marker
   // (if any) is left for diagnostics — a Retry overwrites it on the next run.
-  const failGeneration = useCallback(async (startedAt, params, message) => {
+  const failGeneration = useCallback(async (startedAt, params, message, source = 'generation') => {
     stopPolling()
     await deleteJSON(pendingUrl(appId), token, appId)
+    const elapsed = startedAt ? Math.max(0, Date.now() - startedAt) : 0
+    signal('generation_failed', {
+      source,
+      elapsed_ms: elapsed,
+      provider: params?.provider || '',
+      has_model: Boolean(params?.model),
+    })
+    signalError(message, source)
     setGen({ phase: 'error', startedAt, params, error: message })
   }, [appId, token, stopPolling])
 
@@ -230,6 +251,13 @@ export function useGeneration({ appId, token, onStoryReady }) {
         stopPolling()
         await deleteJSON(pendingUrl(appId), token, appId)
         await deleteJSON(failedUrl(appId), token, appId)
+        signal('item_created', {
+          type: 'story',
+          level: fresh.level || params?.level || '',
+          target_lang: fresh.lang_b || params?.lang_b || '',
+          base_lang: fresh.lang_a || params?.lang_a || '',
+          has_prompt: Boolean(params?.prompt),
+        })
         setGen({ phase: 'done', startedAt, params, error: '' })
         onReadyRef.current?.(entries)
         // Cosmetic toast auto-hide only — the story is already delivered.
@@ -244,13 +272,13 @@ export function useGeneration({ appId, token, onStoryReady }) {
       const marker = await getJSON(failedUrl(appId), token, appId)
       if (marker.ok && marker.data !== undefined) {
         await deleteJSON(failedUrl(appId), token, appId)
-        await failGeneration(startedAt, params, failureMessageFrom(marker.data))
+        await failGeneration(startedAt, params, failureMessageFrom(marker.data), 'generation_marker')
         return
       }
       // No story, no marker, but the run has outlived the script's own
       // timeout — treat it as failed instead of an endless spinner.
       if (Date.now() - startedAt > GEN_TIMEOUT_MS) {
-        await failGeneration(startedAt, params, GEN_TIMEOUT_MESSAGE)
+        await failGeneration(startedAt, params, GEN_TIMEOUT_MESSAGE, 'generation_timeout')
       }
     }, GEN_POLL_MS)
   }, [appId, token, stopPolling, failGeneration])
@@ -297,6 +325,13 @@ export function useGeneration({ appId, token, onStoryReady }) {
     }
     if (failure) {
       await deleteJSON(pendingUrl(appId), token, appId)
+      signal('generation_failed', {
+        source: 'run_job_start',
+        elapsed_ms: 0,
+        provider: params?.provider || '',
+        has_model: Boolean(params?.model),
+      })
+      signalError(failure, 'run_job_start')
       setGen({ phase: 'error', startedAt: 0, params, error: failure })
       return
     }

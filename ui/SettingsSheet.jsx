@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { FALLBACK_GROUPS, normalizeGenProvider, normalizeGenModel, buildProviderGroups } from '../gen-model.mjs'
 import { loadProviderModels, loadProviderStatus } from '../storage.js'
+import { signalError } from '../signals.js'
 import { useModalFocus } from './useModalFocus.js'
 
 // ---------------------------------------------------------------------------
@@ -38,6 +39,8 @@ export function SettingsSheet({ token, prefs, onSelectModel, onClose }) {
         loadProviderStatus(token),
       ])
       if (cancelled) return
+      if (!models) signalError('Could not load provider models.', 'settings.models')
+      if (!status) signalError('Could not load provider status.', 'settings.providers')
       setProviderGroups(models ? buildProviderGroups(models) : FALLBACK_GROUPS)
       setModelsFailed(!models)
       if (status && typeof status === 'object') {

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { adaptLevel, removeStoryFromIndex, setRatingInIndex, CEFR_LEVELS } from '../story-schema.mjs'
 import { normalizeGenProvider, normalizeGenModel } from '../gen-model.mjs'
 import { loadStory, savePrefs, putJSON, deleteJSON, GEN_TIMEOUT_MESSAGE } from '../storage.js'
+import { signal, signalError } from '../signals.js'
 import { RATE_OPTIONS, RATE_LABELS } from '../constants.js'
 import { StoryReader } from './StoryReader.jsx'
 import { GenerateSheet } from './GenerateSheet.jsx'
@@ -44,6 +45,7 @@ export function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, 
       story = await loadStory(appId, token, entry.id)
       if (!story) {
         flashError('Could not load story.')
+        signalError('Could not load story.', 'story_open')
         return
       }
       setStories((prev) => ({ ...prev, [story.id]: story }))
@@ -59,6 +61,12 @@ export function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, 
       if (navRef.current !== handle) return
     }
     setActiveStory(story)
+    signal('item_opened', {
+      type: 'story',
+      level: story.level || entry.level || '',
+      target_lang: story.lang_b || entry.lang_b || '',
+      has_rating: Boolean(story.rating || entry.rating),
+    })
   }, [appId, token, stories, flashError])
 
   const closeStory = useCallback(() => {
@@ -73,7 +81,10 @@ export function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, 
   const handleRate = useCallback(async (story, verdict) => {
     const updated = { ...story, rating: verdict }
     setStories((prev) => ({ ...prev, [story.id]: updated }))
-    await putJSON(`/api/storage/apps/${appId}/stories/${story.id}.json`, token, updated, appId)
+    const storyRes = await putJSON(`/api/storage/apps/${appId}/stories/${story.id}.json`, token, updated, appId)
+    if (storyRes && storyRes.ok === false) {
+      signalError('Could not save story rating.', 'story_rate')
+    }
     // Mirror onto the index entry so the library card shows the rating
     // (and can edit it) without loading the full story record. Serialized +
     // fresh-read: a delete that landed first leaves no entry to rate (the map
@@ -86,7 +97,18 @@ export function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, 
     history.push({ story_id: story.id, verdict, ts: new Date().toISOString() })
     const next = { ...prefs, feedback_history: history }
     onPrefsChange(next)
-    await savePrefs(appId, token, next)
+    const prefsRes = await savePrefs(appId, token, next)
+    if (prefsRes && prefsRes.ok === false) {
+      signalError('Could not save rating history.', 'story_rate')
+    } else if (!storyRes || storyRes.ok !== false) {
+      signal('item_updated', {
+        type: 'story',
+        action: 'rated',
+        verdict,
+        level: story.level || '',
+        target_lang: story.lang_b || '',
+      })
+    }
   }, [appId, token, prefs, onPrefsChange, mutateIndex])
 
   // Rate (or re-rate) straight from a library card — loads the story record
@@ -98,6 +120,7 @@ export function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, 
       story = await loadStory(appId, token, entry.id)
       if (!story) {
         flashError('Could not load story.')
+        signalError('Could not load story.', 'story_rate')
         return
       }
       setStories((prev) => ({ ...prev, [story.id]: story }))
@@ -138,6 +161,15 @@ export function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, 
     }
     onPrefsChange(next)
     await savePrefs(appId, token, next)
+    signal('generation_started', {
+      level: updatedLevel,
+      target_lang: updatedLangB || '',
+      base_lang: updatedLangA || '',
+      provider: genProvider || '',
+      has_model: Boolean(genModel),
+      has_prompt: Boolean(promptVal),
+      library_count: Array.isArray(index) ? index.length : 0,
+    })
     gen.start({ ...params, level: updatedLevel }, index || [])
   }, [appId, token, prefs, onPrefsChange, gen, index])
 
@@ -152,12 +184,18 @@ export function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, 
       setDeleting(false)
       setPendingDelete(null)
       flashError('Could not delete story.')
+      signalError('Could not delete story.', 'story_delete')
       return
     }
     // Serialized + fresh-read: drop the entry from the FRESHEST index, not a
     // stale snapshot, so a concurrent rate can't re-add it and a story the
     // server appended after this client's last render isn't lost.
-    await mutateIndex((fresh) => removeStoryFromIndex(fresh, entry.id))
+    const nextIndex = await mutateIndex((fresh) => removeStoryFromIndex(fresh, entry.id))
+    if (nextIndex === null) {
+      signalError('Could not remove story from index.', 'story_delete')
+    } else {
+      signal('item_deleted', { type: 'story' })
+    }
     setStories((prev) => {
       if (!(entry.id in prev)) return prev
       const next = { ...prev }

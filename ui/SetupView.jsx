@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react'
 import { savePrefs } from '../storage.js'
+import { signalError } from '../signals.js'
 
 // ---------------------------------------------------------------------------
 // SetupView — first-run language collection.
@@ -18,12 +19,18 @@ export function SetupView({ appId, token, prefs, onPrefsChange }) {
     setSaving(true)
     setError('')
     const next = { ...prefs, lang_a: a, lang_b: b, level }
-    const res = await savePrefs(appId, token, next)
+    let res
+    try {
+      res = await savePrefs(appId, token, next)
+    } catch {
+      res = { ok: false }
+    }
     setSaving(false)
     if (res && (res.synced || res.queued)) {
       onPrefsChange(next)
     } else {
       setError('Could not save preferences. Try again.')
+      signalError('Could not save preferences.', 'setup')
     }
   }, [appId, token, prefs, langA, langB, level, onPrefsChange])
 

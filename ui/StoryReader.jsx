@@ -3,6 +3,7 @@ import { stripWordPunct } from '../text-align.mjs'
 import { lookupGlossary } from '../story-schema.mjs'
 import { computeParaOffsets, computeSyncScrollTop, computeProportionalScrollTop, clampScrollTargetToView } from '../scroll-sync.mjs'
 import { RATE_OPTIONS } from '../constants.js'
+import { signal } from '../signals.js'
 import { ParaText } from './ParaText.jsx'
 
 export function StoryReader({ story, onClose, onRate }) {
@@ -159,6 +160,11 @@ export function StoryReader({ story, onClose, onRate }) {
       const word = stripWordPunct(tok.text)
       const entry = word ? lookupGlossary(para, word) : null
       const otherWord = entry ? (lang === 'a' ? entry.word_b : entry.word_a) : null
+      signal('word_highlighted', {
+        level: story.level || '',
+        target_lang: story.lang_b || '',
+        has_glossary_match: Boolean(entry),
+      })
       return { paraIdx, lang, wordIdx: tok.wordIdx, sentIdx: tok.sentIdx, otherWord }
     })
   }, [story])
