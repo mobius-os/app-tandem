@@ -439,9 +439,9 @@ export function useOnline() {
     window.addEventListener('online', onUp)
     window.addEventListener('offline', onDown)
     let mobiusUnsub = null
-    if (window.mobius && typeof window.mobius.onChange === 'function') {
-      mobiusUnsub = window.mobius.onChange((s) => {
-        if (typeof s?.online === 'boolean') setOnline(s.online)
+    if (window.mobius && typeof window.mobius.onOnlineChange === 'function') {
+      mobiusUnsub = window.mobius.onOnlineChange((nextOnline) => {
+        if (typeof nextOnline === 'boolean') setOnline(nextOnline)
       })
     }
     return () => {
