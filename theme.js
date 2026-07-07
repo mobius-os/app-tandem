@@ -4,7 +4,7 @@ export const CSS = `
 .tn-root {
   position: relative;
   display: flex; flex-direction: column;
-  height: 100%; width: 100%; max-width: 100%;
+  height: 100dvh; min-height: 100%; width: 100%; max-width: 100%;
   overflow: hidden;
   background: var(--bg); color: var(--text); font-family: var(--font);
   -webkit-font-smoothing: antialiased;
@@ -22,7 +22,8 @@ export const CSS = `
 .tn-header {
   flex: 0 0 auto;
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  min-height: 48px; padding: 12px 16px;
+  min-height: 48px;
+  padding: max(12px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) 12px max(16px, env(safe-area-inset-left, 0px));
   background: var(--surface); border-bottom: 1px solid var(--border);
 }
 .tn-brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
@@ -146,14 +147,19 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .tn-scrim {
   position: absolute; inset: 0; z-index: 100;
   display: flex; align-items: flex-end; justify-content: center;
-  padding: 16px; background: rgba(0, 0, 0, 0.5);
+  padding: max(16px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) max(16px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+  background: rgba(0, 0, 0, 0.5);
 }
 .tn-sheet {
-  width: 100%; max-width: 480px; max-height: 85vh; overflow-y: auto;
-  padding: 24px; background: var(--surface); border: 1px solid var(--border);
+  width: 100%; max-width: 480px;
+  max-height: min(85vh, calc(100dvh - max(16px, env(safe-area-inset-top, 0px)) - max(16px, env(safe-area-inset-bottom, 0px))));
+  overflow-y: auto;
+  padding: 24px 24px max(24px, env(safe-area-inset-bottom, 0px));
+  background: var(--surface); border: 1px solid var(--border);
   border-radius: 16px 16px 0 0; box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.3);
   display: flex; flex-direction: column; gap: 12px;
   overscroll-behavior: contain;
+  scroll-padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
 }
 .tn-sheet-title { margin: 0 0 4px; font-size: 16px; font-weight: 700; letter-spacing: -0.01em; }
 .tn-sheet-sub { margin: 0 0 8px; font-size: 14px; color: var(--muted); line-height: 1.5; }
@@ -185,7 +191,10 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 /* ---------- App-specific styles ---------- */
 
 /* Story list */
-.tn-list-wrap { padding: 14px 16px 32px; display: flex; flex-direction: column; gap: 8px; }
+.tn-list-wrap {
+  padding: 14px max(16px, env(safe-area-inset-right, 0px)) max(32px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+  display: flex; flex-direction: column; gap: 8px;
+}
 .tn-divider { height: 1px; background: var(--border); margin: 4px 0 10px; }
 .tn-top-row {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
@@ -275,7 +284,8 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 }
 .tn-reader-bar {
   display: flex; align-items: center; gap: 10px;
-  padding: 10px 14px; border-bottom: 1px solid var(--border);
+  padding: max(10px, env(safe-area-inset-top, 0px)) max(14px, env(safe-area-inset-right, 0px)) 10px max(14px, env(safe-area-inset-left, 0px));
+  border-bottom: 1px solid var(--border);
   background: var(--surface); flex-shrink: 0;
 }
 .tn-reader-back {
@@ -321,7 +331,7 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .tn-pane {
   overflow-y: auto; overflow-x: hidden;
   overscroll-behavior: contain;
-  padding: 0 0 32px;
+  padding: 0 0 max(32px, env(safe-area-inset-bottom, 0px));
   min-height: 0;
   /* The word-tap sync sets pane.scrollTop to a paragraph's offsetTop
      (computeParaOffsets + the highlight effect). offsetTop is measured
