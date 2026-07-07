@@ -316,7 +316,7 @@ export function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, 
         // already says everything — an empty-state lecture under it would
         // just contradict the "something is happening" signal.
         genBusy ? null : (
-          <div className="tn-empty" style={{ margin: '0 auto' }}>
+          <div className="tn-empty">
             <div className="tn-empty-mark" aria-hidden="true">📖</div>
             <div className="tn-empty-title">No stories yet</div>
             <p className="tn-empty-text">

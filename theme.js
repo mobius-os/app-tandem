@@ -34,7 +34,7 @@ export const CSS = `
 /* Accent-dot fallback shown (via onError) when the install has no custom icon. */
 .tn-brand-fallback {
   flex: 0 0 auto; width: 34px; height: 34px; border-radius: 6px;
-  align-items: center; justify-content: center;
+  display: flex; align-items: center; justify-content: center;
   background: color-mix(in srgb, var(--accent) 16%, transparent);
   color: var(--accent); font-size: 18px; font-weight: 700; line-height: 1;
 }
@@ -106,7 +106,7 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .tn-btn:active { transform: scale(0.97); }
 .tn-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .tn-btn:disabled { opacity: 0.5; cursor: default; transform: none; }
-.tn-btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.tn-btn-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
 @media (hover: hover) { .tn-btn-primary:hover { filter: brightness(1.06); } }
 .tn-btn-secondary { background: var(--surface2, var(--surface)); }
 @media (hover: hover) { .tn-btn-secondary:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); } }
@@ -125,6 +125,7 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 }
 .tn-input::placeholder { color: var(--muted); }
 .tn-input:focus, .tn-select:focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.tn-input:focus-visible, .tn-select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* /mobius-ui:Input */
 
 /* Free-form prompt textarea — same visual language as .tn-input, taller and
@@ -139,6 +140,7 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 }
 .tn-textarea::placeholder { color: var(--muted); }
 .tn-textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.tn-textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* mobius-ui:Sheet v1 — keep in sync; library candidate. Diverge below the marker only. */
 .tn-scrim {
@@ -191,29 +193,31 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 }
 .tn-generate-btn {
   min-height: 44px; padding: 10px 16px; border-radius: 10px;
-  background: var(--accent); border: 1px solid var(--accent); color: #fff;
+  background: var(--accent); border: 1px solid var(--accent); color: var(--accent-fg);
   font-family: var(--font); font-size: 14px; font-weight: 600; cursor: pointer;
   white-space: nowrap; touch-action: manipulation; user-select: none;
   transition: filter 0.14s ease, transform 0.1s ease;
 }
 @media (hover: hover) { .tn-generate-btn:not(:disabled):hover { filter: brightness(1.08); } }
 .tn-generate-btn:active { transform: scale(0.97); }
+.tn-generate-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .tn-generate-btn:disabled { background: var(--surface); border-color: var(--border); color: var(--muted); cursor: default; pointer-events: none; }
 .tn-status-hint { font-size: 12px; color: var(--muted); }
 .tn-error-hint { font-size: 12px; color: var(--danger); }
 .tn-stale-actions { display: inline-flex; gap: 6px; }
 .tn-stale-btn {
-  min-height: 32px; padding: 4px 10px; border-radius: 8px;
+  min-height: 44px; padding: 7px 12px; border-radius: 8px;
   border: 1px solid var(--border); background: transparent;
   color: var(--accent); font-family: var(--font); font-size: 12px; font-weight: 650;
   cursor: pointer; touch-action: manipulation; user-select: none;
 }
 @media (hover: hover) { .tn-stale-btn:hover { border-color: var(--accent); } }
+.tn-stale-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* Library card: the card itself is a row container; the open affordance and
    the delete affordance are sibling buttons (no nested-button markup). */
 .tn-card-open {
-  flex: 1; min-width: 0; display: flex; align-items: center; gap: 14px;
+  flex: 1; min-width: 0; min-height: 44px; display: flex; align-items: center; gap: 14px;
   padding: 0; margin: 0; border: none; background: transparent;
   color: inherit; font-family: inherit; text-align: left; cursor: pointer;
   touch-action: manipulation;
@@ -224,7 +228,7 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 }
 .tn-card:has(.tn-card-open:active) { transform: scale(0.992); }
 .tn-card-del {
-  flex: 0 0 auto; width: 36px; height: 36px; margin-right: -6px;
+  flex: 0 0 auto; width: 44px; height: 44px; margin-right: -8px;
   display: inline-flex; align-items: center; justify-content: center;
   border: none; border-radius: 8px; background: transparent;
   color: var(--muted); cursor: pointer;
@@ -241,7 +245,7 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .tn-card-row { display: flex; align-items: center; gap: 14px; min-width: 0; }
 .tn-card-rate-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .tn-card-rating {
-  min-height: 32px; padding: 4px 12px; border-radius: 16px;
+  min-height: 44px; padding: 9px 12px; border-radius: 10px;
   border: 1px solid var(--border); background: transparent;
   color: var(--muted); font-size: 12px; font-weight: 600;
   cursor: pointer; font-family: var(--font);
@@ -281,6 +285,7 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
   cursor: pointer; font-family: var(--font);
   touch-action: manipulation; user-select: none;
 }
+.tn-reader-back:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media (prefers-reduced-motion: no-preference) {
   .tn-reader-back:active { opacity: 0.75; }
 }
@@ -296,13 +301,14 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 /* Language-toggle pill */
 .tn-lang-toggle {
   display: inline-flex; align-items: center; gap: 4px;
-  min-height: 36px; padding: 5px 12px; border-radius: 20px;
+  min-height: 44px; padding: 8px 12px; border-radius: 10px;
   border: 1px solid var(--border); background: var(--surface);
   color: var(--text); font-size: 12px; font-weight: 650; cursor: pointer;
   touch-action: manipulation; user-select: none;
 }
 @media (hover: hover) { .tn-lang-toggle:hover { border-color: var(--accent); } }
 .tn-lang-toggle:active { transform: scale(0.96); }
+.tn-lang-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .tn-lang-toggle-arrow { color: var(--muted); font-size: 10px; }
 
 /* Split-pane reader */
@@ -330,7 +336,7 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 }
 .tn-pane::-webkit-scrollbar { width: 9px; height: 9px; }
 .tn-pane::-webkit-scrollbar-thumb {
-  background: var(--border); border-radius: 999px;
+  background: var(--border); border-radius: 8px;
   border: 2px solid transparent; background-clip: padding-box;
 }
 .tn-pane::-webkit-scrollbar-track { background: transparent; }
@@ -339,7 +345,7 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .tn-pane-bottom {}
 
 /* Draggable divider: a SLIM 10px visual bar; the ::before overlay extends
-   the pointer hit area to ~26px without adding visual weight. z-index keeps
+   the pointer hit area to 44px without adding visual weight. z-index keeps
    the overlay above the adjacent panes so the extra hit area actually
    receives the pointer. (Same recipe as app-latex / app-webstudio.) */
 .tn-divider-handle {
@@ -354,7 +360,7 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 }
 .tn-divider-handle::before {
   content: ''; position: absolute;
-  left: 0; right: 0; top: -8px; bottom: -8px;
+  left: 0; right: 0; top: -17px; bottom: -17px;
 }
 .tn-divider-handle:hover,
 .tn-divider-handle:focus-visible {
@@ -454,9 +460,15 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
   70% { opacity: 1; }
   100% { opacity: 0; transform: translateY(100%); }
 }
+@media (prefers-reduced-motion: reduce) {
+  .tn-rate-bar,
+  .tn-rate-bar.is-noted {
+    animation: none;
+  }
+}
 .tn-rate-label { font-weight: 600; }
 .tn-rate-chip {
-  min-height: 36px; padding: 5px 13px; border-radius: 18px;
+  min-height: 44px; padding: 9px 13px; border-radius: 10px;
   border: 1px solid var(--border); background: transparent;
   color: var(--muted); font-size: 12.5px; font-weight: 600;
   cursor: pointer; font-family: var(--font);
@@ -465,6 +477,7 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 }
 @media (hover: hover) { .tn-rate-chip:hover { border-color: var(--accent); color: var(--text); } }
 .tn-rate-chip:active { transform: scale(0.96); }
+.tn-rate-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .tn-rate-chip.is-selected {
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   border-color: var(--accent); color: var(--accent);
@@ -476,10 +489,15 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .tn-setup-label { font-size: 14px; font-weight: 700; color: var(--text); margin: 0 0 6px; display: block; }
 .tn-setup-note { font-size: 12px; color: var(--muted); line-height: 1.5; margin: 0 0 8px; }
 .tn-setup-row { margin-bottom: 16px; }
+.tn-setup-mark { align-self: center; }
+.tn-setup-intro { text-align: center; }
+.tn-full-width { width: 100%; }
+.tn-prompt-hint { margin: 6px 0 0; }
+.tn-model-fallback-note { margin-top: 8px; }
 
 /* Toasts + destructive button */
 .tn-error-toast { font-size: 12px; color: var(--danger); }
-.tn-btn-danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+.tn-btn-danger { background: var(--danger); border-color: var(--danger); color: var(--accent-fg); }
 @media (hover: hover) { .tn-btn-danger:hover { filter: brightness(1.08); } }
 
 /* Spinners + loading */
@@ -496,7 +514,7 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 /* Scrollskin */
 .tn-scroll::-webkit-scrollbar { width: 9px; height: 9px; }
 .tn-scroll::-webkit-scrollbar-thumb {
-  background: var(--border); border-radius: 999px;
+  background: var(--border); border-radius: 8px;
   border: 2px solid transparent; background-clip: padding-box;
 }
 .tn-scroll::-webkit-scrollbar-track { background: transparent; }

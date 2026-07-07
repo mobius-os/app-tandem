@@ -30,6 +30,7 @@ export default function App({ appId, token }) {
   const storyIndex = useStoryIndex({ appId, token })
   const { index, setIndex, mutate: mutateIndex } = storyIndex
   const [showSettings, setShowSettings] = useState(false)
+  const [iconFailed, setIconFailed] = useState(false)
   const online = useOnline()
   const gen = useGeneration({ appId, token, onStoryReady: setIndex })
 
@@ -94,19 +95,17 @@ export default function App({ appId, token }) {
             the broken img and reveals the accent-dot fallback for installs with
             no custom icon. */}
         <div className="tn-brand">
-          <img
-            src={`/api/apps/${appId}/icon?size=64`}
-            alt=""
-            width={34}
-            height={34}
-            className="tn-brand-icon"
-            onError={(e) => {
-              e.currentTarget.style.display = 'none'
-              const f = e.currentTarget.nextElementSibling
-              if (f) f.style.display = 'flex'
-            }}
-          />
-          <span className="tn-brand-fallback" style={{ display: 'none' }} aria-hidden="true">·</span>
+          {!iconFailed && (
+            <img
+              src={`/api/apps/${appId}/icon?size=64`}
+              alt=""
+              width={34}
+              height={34}
+              className="tn-brand-icon"
+              onError={() => setIconFailed(true)}
+            />
+          )}
+          {iconFailed && <span className="tn-brand-fallback" aria-hidden="true">·</span>}
           {/* Static name + tagline. NOT the old dynamic language indicator
               (removed in v0.7.0) — this never changes per story/language. */}
           <div className="tn-brand-text">

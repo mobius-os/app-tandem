@@ -131,7 +131,7 @@ export function SettingsSheet({ token, prefs, onSelectModel, onClose }) {
             </div>
           )}
           {modelsFailed && providerGroups !== null && (
-            <p className="tn-setup-note" style={{ marginTop: 8 }}>
+            <p className="tn-setup-note tn-model-fallback-note">
               Couldn&apos;t load the live model list — showing a short fallback.
               New stories still generate fine.
             </p>

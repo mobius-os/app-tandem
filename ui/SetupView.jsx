@@ -36,8 +36,8 @@ export function SetupView({ appId, token, prefs, onPrefsChange }) {
 
   return (
     <div className="tn-setup-wrap">
-      <div className="tn-empty-mark" style={{ alignSelf: 'center' }} aria-hidden="true">🗣️</div>
-      <div style={{ textAlign: 'center' }}>
+      <div className="tn-empty-mark tn-setup-mark" aria-hidden="true">🗣️</div>
+      <div className="tn-setup-intro">
         <div className="tn-empty-title">Welcome to Tandem</div>
         <p className="tn-empty-text">
           Tell us which languages to use and we'll generate bilingual stories
@@ -93,12 +93,11 @@ export function SetupView({ appId, token, prefs, onPrefsChange }) {
 
       <button
         type="button"
-        className="tn-btn tn-btn-primary"
+        className="tn-btn tn-btn-primary tn-full-width"
         onClick={handleSave}
         disabled={saving}
-        style={{ width: '100%' }}
       >
-        {saving ? 'Saving…' : 'Start reading'}
+        Start reading
       </button>
     </div>
   )

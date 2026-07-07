@@ -93,7 +93,7 @@ export function GenerateSheet({ onGenerate, onCancel, initialLangA, initialLangB
             rows={3}
             aria-describedby="tn-gen-prompt-hint"
           />
-          <p id="tn-gen-prompt-hint" className="tn-setup-note" style={{ margin: '6px 0 0' }}>
+          <p id="tn-gen-prompt-hint" className="tn-setup-note tn-prompt-hint">
             Describe whatever you like — for example: “a classic fable”, “a travel
             adventure”, “a daily-life scene”, “a sci-fi mystery”, “continue{' '}
             {recentTitle ? `“${recentTitle}”` : 'a recent story'}”, or “a sequel
