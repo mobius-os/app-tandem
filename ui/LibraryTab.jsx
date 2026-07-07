@@ -37,7 +37,18 @@ export function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, 
   }, [])
 
   const openStory = useCallback(async (entry) => {
-    // Register back nav if available.
+    // Load the full story before registering shell back nav; a missing/corrupt
+    // story should not leave a back sentinel behind.
+    let story = stories[entry.id]
+    if (!story) {
+      story = await loadStory(appId, token, entry.id)
+      if (!story) {
+        flashError('Could not load story.')
+        return
+      }
+      setStories((prev) => ({ ...prev, [story.id]: story }))
+    }
+
     if (window.mobius?.nav?.open) {
       const handle = window.mobius.nav.open('tandem-reader', () => {
         navRef.current = null
@@ -47,18 +58,7 @@ export function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, 
       await handle.ready?.catch(() => false)
       if (navRef.current !== handle) return
     }
-    // Load the full story if not already cached.
-    if (!stories[entry.id]) {
-      const story = await loadStory(appId, token, entry.id)
-      if (story) {
-        setStories((prev) => ({ ...prev, [story.id]: story }))
-        setActiveStory(story)
-      } else {
-        flashError('Could not load story.')
-      }
-    } else {
-      setActiveStory(stories[entry.id])
-    }
+    setActiveStory(story)
   }, [appId, token, stories, flashError])
 
   const closeStory = useCallback(() => {

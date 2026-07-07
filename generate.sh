@@ -731,12 +731,17 @@ except json.JSONDecodeError:
 if not isinstance(story, dict):
     sys.exit(2)
 
-# Ensure id is a valid UUID; generate one if missing/invalid.
-sid = story.get("id", "")
+# Ensure id is a canonical lowercase UUID v4; generate one if missing,
+# malformed, uppercased, brace-wrapped, or any valid-but-wrong UUID version.
+sid = str(story.get("id", "")).strip().lower()
 try:
-    uuid_mod.UUID(str(sid))
+    parsed = uuid_mod.UUID(sid)
 except Exception:
+    parsed = None
+if not parsed or parsed.version != 4 or str(parsed) != sid:
     story["id"] = str(uuid_mod.uuid4())
+else:
+    story["id"] = sid
 
 # Enforce languages (the model may have misread them).
 story.setdefault("lang_a", lang_a)
@@ -892,7 +897,15 @@ if [ "$IDX_PUT_CODE" != "200" ] && [ "$IDX_PUT_CODE" != "201" ] && [ "$IDX_PUT_C
 fi
 
 # 8b. Clear next_request from prefs so the next generation starts with no prompt.
-CLEAR_PREFS_CODE=$(python3 - "$PREFS_FILE" "$PREFS_CODE" <<'PY' > "$WORK_DIR/prefs-cleared.json" 2>>"$LOG_FILE"
+# Re-fetch prefs here instead of writing the startup snapshot: a run can take
+# minutes, and settings/rating writes made while it is running must survive.
+FRESH_PREFS_FILE="$WORK_DIR/prefs-fresh.json"
+FRESH_PREFS_CODE=$(curl -sS -o "$FRESH_PREFS_FILE" -w "%{http_code}" \
+  -H "Authorization: Bearer $SERVICE_TOKEN" \
+  "$API_BASE_URL/api/storage/apps/$APP_ID/prefs.json") || FRESH_PREFS_CODE=000
+
+if [ "$FRESH_PREFS_CODE" = "200" ]; then
+  CLEAR_PREFS_CODE=$(python3 - "$FRESH_PREFS_FILE" "$FRESH_PREFS_CODE" <<'PY' > "$WORK_DIR/prefs-cleared.json" 2>>"$LOG_FILE"
 import json
 import sys
 
@@ -905,19 +918,22 @@ if prefs_code == "200":
     except Exception:
         pass
 
-prefs["next_request"] = None
+prefs.pop("next_request", None)
 print(json.dumps(prefs, ensure_ascii=False, indent=2))
 PY
-)
-if [ -s "$WORK_DIR/prefs-cleared.json" ]; then
-  PREFS_PUT_CODE=$(curl -sS -o /dev/null -w "%{http_code}" \
-    -X PUT "$API_BASE_URL/api/storage/apps/$APP_ID/prefs.json" \
-    -H "Authorization: Bearer $SERVICE_TOKEN" \
-    -H "Content-Type: application/json" \
-    --data-binary @"$WORK_DIR/prefs-cleared.json") || PREFS_PUT_CODE=000
-  if [ "$PREFS_PUT_CODE" != "200" ] && [ "$PREFS_PUT_CODE" != "201" ] && [ "$PREFS_PUT_CODE" != "204" ]; then
-    log "WARN: failed to clear next_request in prefs (HTTP $PREFS_PUT_CODE)"
+  )
+  if [ -s "$WORK_DIR/prefs-cleared.json" ]; then
+    PREFS_PUT_CODE=$(curl -sS -o /dev/null -w "%{http_code}" \
+      -X PUT "$API_BASE_URL/api/storage/apps/$APP_ID/prefs.json" \
+      -H "Authorization: Bearer $SERVICE_TOKEN" \
+      -H "Content-Type: application/json" \
+      --data-binary @"$WORK_DIR/prefs-cleared.json") || PREFS_PUT_CODE=000
+    if [ "$PREFS_PUT_CODE" != "200" ] && [ "$PREFS_PUT_CODE" != "201" ] && [ "$PREFS_PUT_CODE" != "204" ]; then
+      log "WARN: failed to clear next_request in prefs (HTTP $PREFS_PUT_CODE)"
+    fi
   fi
+else
+  log "WARN: skipped clearing next_request because fresh prefs fetch failed (HTTP $FRESH_PREFS_CODE)"
 fi
 
 # 9. Push notification.

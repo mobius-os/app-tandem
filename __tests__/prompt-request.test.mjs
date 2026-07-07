@@ -2,8 +2,8 @@
 // series/storyline persistence the GenerateSheet split topic + storyline into).
 //
 // The contract: the reader types ONE free-form prompt. It is PER-RUN by design
-// -- it lives only inside next_request, which generate.sh wipes after every run
-// (prefs["next_request"] = None), so the next generation starts blank. There is
+// -- it lives only inside next_request, which generate.sh removes after every run,
+// so the next generation starts blank. There is
 // no persistent storyline pref any more. Language/level still persist at the top
 // level of prefs. A mid-upgrade run whose next_request still carries a legacy
 // topic/storyline (but no prompt) must fold those into the prompt rather than
@@ -19,7 +19,9 @@ const GENERATE_SH = readFileSync(join(HERE, '..', 'generate.sh'), 'utf8')
 
 // The post-run wipe generate.sh performs on prefs: clear next_request only.
 function wipeNextRequest(prefs) {
-  return { ...prefs, next_request: null }
+  const next = { ...prefs }
+  delete next.next_request
+  return next
 }
 
 // The shape index.jsx writes when the reader generates with a free-form prompt
@@ -53,7 +55,7 @@ test('the prompt does NOT survive the next_request wipe (per-run by design)', ()
     'a sci-fi mystery',
   )
   const after = wipeNextRequest(before)
-  assert.equal(after.next_request, null, 'next_request must be cleared by the wipe')
+  assert.equal('next_request' in after, false, 'next_request must be removed by the wipe')
   assert.equal('prompt' in after, false, 'the prompt must not leak to the top level')
 })
 
