@@ -12,7 +12,14 @@ const read = (...parts) => readFileSync(root(...parts), 'utf8')
 test('local overlays register Mobius shell back targets and await readiness', () => {
   const hook = read('ui', 'useShellBackTarget.js')
   assert.match(hook, /window\.mobius\?\.nav\?\.open/, 'hook must use shell nav.open when available')
-  assert.match(hook, /await handle\.ready/, 'hook must await handle.ready per shell protocol')
+  // Register BEFORE paint so a back gesture can't escape the overlay in the
+  // frame between mount and effect (useLayoutEffect runs pre-paint, useEffect
+  // does not).
+  assert.match(hook, /useLayoutEffect\(/, 'hook must register the back target before paint (useLayoutEffect)')
+  assert.doesNotMatch(hook, /\buseEffect\(/, 'registration must not use post-paint useEffect')
+  // Observe the ready flag per the shell protocol (ready resolves true/false and
+  // never rejects, so the hook must reference it, not assume a throw).
+  assert.match(hook, /handle\.ready/, 'hook must observe handle.ready per shell protocol')
   assert.match(hook, /handle\.close\?\.\(\)/, 'hook cleanup must close the shell handle')
 
   const generate = read('ui', 'GenerateSheet.jsx')
