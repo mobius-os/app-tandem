@@ -1,10 +1,33 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { stripWordPunct } from '../text-align.mjs'
+import { inferAlignedCue, stripWordPunct } from '../text-align.mjs'
 import { lookupGlossary } from '../story-schema.mjs'
 import { computeParaOffsets, computeSyncScrollTop, computeProportionalScrollTop, clampScrollTargetToView } from '../scroll-sync.mjs'
 import { RATE_OPTIONS } from '../constants.js'
 import { signal } from '../signals.js'
 import { ParaText } from './ParaText.jsx'
+
+const DEFAULT_SPLIT_RATIO = 0.58
+const SPLIT_RATIO_KEY = 'tn-split-ratio-v2'
+const LEGACY_SPLIT_RATIO_KEY = 'tn-split-ratio'
+
+function readInitialSplitRatio() {
+  const read = (key) => {
+    try {
+      const v = parseFloat(localStorage.getItem(key))
+      return v >= 0.2 && v <= 0.8 ? v : null
+    } catch {
+      return null
+    }
+  }
+  const current = read(SPLIT_RATIO_KEY)
+  if (current !== null) return current
+  const legacy = read(LEGACY_SPLIT_RATIO_KEY)
+  // Old installs auto-saved the old 50/50 default, so treat near-half as
+  // "not chosen" and move the divider lower. Preserve clearly intentional
+  // manual drags.
+  if (legacy !== null && (legacy < 0.45 || legacy > 0.55)) return legacy
+  return DEFAULT_SPLIT_RATIO
+}
 
 export function StoryReader({ story, onClose, onRate }) {
   // The TARGET language (lang_b, the one being learned) leads by default — it
@@ -19,14 +42,9 @@ export function StoryReader({ story, onClose, onRate }) {
   const [atEnd, setAtEnd] = useState(false)
   const [showNoted, setShowNoted] = useState(false)
   const atEndRef = useRef(false)
-  const [splitRatio, setSplitRatio] = useState(() => {
-    try {
-      const v = parseFloat(localStorage.getItem('tn-split-ratio'))
-      if (v >= 0.2 && v <= 0.8) return v
-    } catch {}
-    return 0.5
-  })
-  // Inline word-tap highlight: { paraIdx, lang, wordIdx, sentIdx, otherWord }
+  const [splitRatio, setSplitRatio] = useState(readInitialSplitRatio)
+  // Inline word-tap highlight:
+  // { paraIdx, lang, wordIdx, sentIdx, sourceWord, otherWord, otherSentence, note, matchKind }
   const [highlight, setHighlight] = useState(null)
 
   const topPaneRef = useRef(null)
@@ -56,7 +74,7 @@ export function StoryReader({ story, onClose, onRate }) {
 
   // Persist split ratio
   useEffect(() => {
-    try { localStorage.setItem('tn-split-ratio', String(splitRatio)) } catch {}
+    try { localStorage.setItem(SPLIT_RATIO_KEY, String(splitRatio)) } catch {}
   }, [splitRatio])
 
   // Cleanup rAF on unmount
@@ -159,19 +177,41 @@ export function StoryReader({ story, onClose, onRate }) {
       const para = story.paragraphs[paraIdx]
       const word = stripWordPunct(tok.text)
       const entry = word ? lookupGlossary(para, word) : null
-      const otherWord = entry ? (lang === 'a' ? entry.word_b : entry.word_a) : null
+      const sourceText = lang === 'a' ? para.a : para.b
+      const otherText = lang === 'a' ? para.b : para.a
+      let otherWord = entry ? (lang === 'a' ? entry.word_b : entry.word_a) : ''
+      let otherSentence = ''
+      let matchKind = entry ? 'glossary' : 'sentence'
+      if (!entry) {
+        const cue = inferAlignedCue(sourceText, otherText, tok.wordIdx, tok.sentIdx)
+        otherWord = cue.word || ''
+        otherSentence = cue.sentence || ''
+        if (otherWord) matchKind = 'approx'
+      }
       signal('word_highlighted', {
         level: story.level || '',
         target_lang: story.lang_b || '',
         has_glossary_match: Boolean(entry),
+        match_kind: matchKind,
       })
-      return { paraIdx, lang, wordIdx: tok.wordIdx, sentIdx: tok.sentIdx, otherWord }
+      return {
+        paraIdx,
+        lang,
+        wordIdx: tok.wordIdx,
+        sentIdx: tok.sentIdx,
+        sourceWord: word,
+        otherWord,
+        otherSentence,
+        note: entry?.note || '',
+        matchKind,
+      }
     })
   }, [story])
 
   // Tapping anywhere that isn't a word clears the highlight.
   const handlePaneClick = useCallback((e) => {
-    if (e.target.closest && e.target.closest('.tn-word')) return
+    const target = e.target?.nodeType === Node.ELEMENT_NODE ? e.target : e.target?.parentElement
+    if (target?.closest && target.closest('.tn-word')) return
     setHighlight(null)
   }, [])
 
@@ -329,6 +369,27 @@ export function StoryReader({ story, onClose, onRate }) {
           ))}
         </div>
       </div>
+
+      {highlight && (
+        <div className={`tn-lookup-card is-${highlight.matchKind || 'sentence'}`} role="status" aria-live="polite">
+          <div className="tn-lookup-main">
+            <span className="tn-lookup-source">{highlight.sourceWord}</span>
+            <span className="tn-lookup-arrow" aria-hidden="true">→</span>
+            <span className="tn-lookup-target">
+              {highlight.otherWord || 'translated sentence'}
+            </span>
+          </div>
+          {highlight.note && <div className="tn-lookup-note">{highlight.note}</div>}
+          {highlight.matchKind !== 'glossary' && (
+            <div className="tn-lookup-note">
+              No exact glossary entry yet — the translated sentence is highlighted.
+            </div>
+          )}
+          {highlight.otherSentence && (
+            <div className="tn-lookup-sentence">{highlight.otherSentence}</div>
+          )}
+        </div>
+      )}
 
       {/* Difficulty bar — floats over the reader, belonging to NEITHER pane.
           Shows only when an unrated story has been read to the end; after

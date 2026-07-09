@@ -44,10 +44,13 @@ export function ParaText({ text, paraIdx, paneLang, highlight, onWordTap }) {
           return inCtx ? <span key={i} className="tn-ctx">{tok.text}</span> : tok.text
         }
         const isHit = strongStart >= 0 && tok.wordIdx >= strongStart && tok.wordIdx <= strongEnd
+        const hitClass = isHit
+          ? (isTappedPane || highlight?.matchKind === 'glossary' ? ' is-hit' : ' is-guess')
+          : ''
         return (
           <span
             key={i}
-            className={`tn-word${inCtx ? ' tn-ctx' : ''}${isHit ? ' is-hit' : ''}`}
+            className={`tn-word${inCtx ? ' tn-ctx' : ''}${hitClass}`}
             role="button"
             tabIndex={0}
             onClick={() => onWordTap(paraIdx, paneLang, tok)}

@@ -179,6 +179,16 @@ test('lookupGlossary: a token inside a multi-word term matches by whole word', (
   assert.equal(lookupGlossary(para, 'sent'), null)
 })
 
+test('lookupGlossary accepts conservative longer-word inflections', () => {
+  const para = {
+    a: 'The fisherman waited.',
+    b: 'Ribaru se činilo dugo.',
+    glossary: [{ word_a: 'fisherman', word_b: 'ribar' }],
+  }
+  assert.equal(lookupGlossary(para, 'ribaru').word_a, 'fisherman')
+  assert.equal(lookupGlossary(para, 'riba'), null)
+})
+
 // ---------------------------------------------------------------------------
 // normalizeStory
 // ---------------------------------------------------------------------------

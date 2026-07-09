@@ -9,7 +9,7 @@
 // highlight side uses (stripWordPunct from text-align.mjs). index.jsx
 // already inlines stripWordPunct in its INLINE-TEXT-ALIGN block, so the
 // inline copy of lookupGlossary calls it directly without this import.
-import { stripWordPunct } from './text-align.mjs'
+import { stripWordPunct, tokensLooselyMatch } from './text-align.mjs'
 
 export const CEFR_LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2']
 
@@ -46,17 +46,19 @@ export function adaptLevel(currentLevel, feedbackHistory) {
 // "miller". Multi-word terms (e.g. "se sentó") match if any of their tokens
 // equals the needle. Uses the same stripWordPunct normalization as the
 // highlight side, so "word," and "word." resolve to the same token.
+// Also accepts conservative inflection/plural matches for longer words so a
+// glossary base form still helps when the story text uses a case/conjugation.
 // Returns the matching glossary entry object, or null.
 export function lookupGlossary(para, word) {
   if (!para || !Array.isArray(para.glossary)) return null
   if (typeof word !== 'string' || !word.trim()) return null
-  const needle = stripWordPunct(word).toLowerCase()
+  const needle = stripWordPunct(word)
   if (!needle) return null
   const tokensOf = (term) =>
-    String(term).split(/\s+/).map((w) => stripWordPunct(w).toLowerCase()).filter(Boolean)
+    String(term).split(/\s+/).map((w) => stripWordPunct(w)).filter(Boolean)
   return para.glossary.find((entry) =>
-    (typeof entry.word_a === 'string' && tokensOf(entry.word_a).includes(needle)) ||
-    (typeof entry.word_b === 'string' && tokensOf(entry.word_b).includes(needle)),
+    (typeof entry.word_a === 'string' && tokensOf(entry.word_a).some((w) => tokensLooselyMatch(w, needle))) ||
+    (typeof entry.word_b === 'string' && tokensOf(entry.word_b).some((w) => tokensLooselyMatch(w, needle))),
   ) || null
 }
 
