@@ -8,6 +8,7 @@ import {
   alignSentenceIndex,
   stripWordPunct,
   findPhraseTokenRange,
+  inferAlignedCue,
 } from '../text-align.mjs'
 
 // ---------------------------------------------------------------------------
@@ -153,4 +154,21 @@ test('findPhraseTokenRange returns the FIRST match', () => {
   const tokens = tokenizeParagraph('se fue y se fue')
   const range = findPhraseTokenRange(tokens, 'se fue')
   assert.deepEqual(range, { start: 0, end: 1 })
+})
+
+test('findPhraseTokenRange accepts conservative inflected forms, not substrings', () => {
+  const tokens = tokenizeParagraph('Poštedi me, ribaru.')
+  assert.deepEqual(findPhraseTokenRange(tokens, 'ribar'), { start: 2, end: 2 })
+  assert.equal(findPhraseTokenRange(tokens, 'sent'), null)
+})
+
+test('inferAlignedCue returns a closest translated cue and sentence', () => {
+  const cue = inferAlignedCue(
+    'The old fisherman spared the prince.',
+    'Stari ribar poštedio je princa.',
+    2,
+    0,
+  )
+  assert.equal(cue.word, 'poštedio')
+  assert.equal(cue.sentence, 'Stari ribar poštedio je princa.')
 })

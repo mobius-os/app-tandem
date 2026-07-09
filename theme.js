@@ -461,6 +461,58 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
   color: var(--text); font-weight: 700;
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 70%, transparent);
 }
+.tn-word.is-guess {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  color: var(--text); font-weight: 700;
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--accent) 34%, transparent),
+    inset 0 -2px 0 color-mix(in srgb, var(--accent) 70%, transparent);
+}
+
+/* Lookup card — a temporary tap result. Exact glossary hits are strongest;
+   non-glossary taps explicitly say the sentence translation is being shown so
+   the interaction never reads as a silent miss. */
+.tn-lookup-card {
+  position: absolute; left: 12px; right: 12px;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  z-index: 9;
+  padding: 11px 13px;
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--border));
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.26);
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  display: flex; flex-direction: column; gap: 5px;
+  max-height: min(34dvh, 240px);
+  overflow: auto;
+}
+.tn-lookup-card.is-sentence,
+.tn-lookup-card.is-approx {
+  border-style: dashed;
+}
+.tn-lookup-main {
+  display: flex; align-items: baseline; gap: 8px; min-width: 0;
+  font-size: 14px; line-height: 1.35;
+}
+.tn-lookup-source {
+  color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis;
+}
+.tn-lookup-arrow { color: var(--accent); font-weight: 800; }
+.tn-lookup-target {
+  color: var(--text); font-weight: 760; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.tn-lookup-card.is-approx .tn-lookup-target::before {
+  content: 'closest cue: ';
+  color: var(--muted); font-weight: 600;
+}
+.tn-lookup-note {
+  color: var(--muted); font-size: 12px; line-height: 1.35;
+}
+.tn-lookup-sentence {
+  color: var(--text); font-size: 12.5px; line-height: 1.45;
+  padding-top: 2px;
+}
 
 /* Difficulty bar — floats over the reader bottom edge, outside both panes.
    Slides up when an unrated story is read to the end; the noted state fades
