@@ -18,6 +18,29 @@ export const CSS = `
 }
 /* /mobius-ui:Root */
 
+/* mobius-ui:Scrollskin v2 — keep in sync; hidden by default, content stays scrollable. */
+.tn-scroll,
+.tn-sheet,
+.tn-pane {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.tn-scroll::-webkit-scrollbar,
+.tn-sheet::-webkit-scrollbar,
+.tn-pane::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+/* /mobius-ui:Scrollskin */
+
+/* mobius-ui:Focus v1 -- shared keyboard focus ring (WCAG 2.4.7); never bare outline:none */
+:where(button,a,input,textarea,select,summary,[role="button"],[tabindex]:not([tabindex="-1"])):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* /mobius-ui:Focus */
+
 /* mobius-ui:Header v1 — keep in sync; library candidate. Diverge below the marker only. */
 .tn-header {
   flex: 0 0 auto;
@@ -29,12 +52,12 @@ export const CSS = `
 .tn-brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
 /* Brand mark = the real app icon, downscaled + cached server-side. */
 .tn-brand-icon {
-  flex: 0 0 auto; width: 34px; height: 34px; border-radius: 6px;
+  flex: 0 0 auto; width: 34px; height: 34px; border-radius: 8px;
   object-fit: cover; display: block;
 }
 /* Accent-dot fallback shown (via onError) when the install has no custom icon. */
 .tn-brand-fallback {
-  flex: 0 0 auto; width: 34px; height: 34px; border-radius: 6px;
+  flex: 0 0 auto; width: 34px; height: 34px; border-radius: 8px;
   display: flex; align-items: center; justify-content: center;
   background: color-mix(in srgb, var(--accent) 16%, transparent);
   color: var(--accent); font-size: 18px; font-weight: 700; line-height: 1;
@@ -47,7 +70,7 @@ export const CSS = `
 }
 .tn-brand-name {
   font-size: 15px; font-weight: 700; color: var(--text);
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
 }
 .tn-brand-tagline {
   font-size: 11.5px; font-weight: 500; color: var(--muted);
@@ -67,7 +90,7 @@ export const CSS = `
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
 }
-.tn-empty-title { font-size: 17px; font-weight: 700; color: var(--text); letter-spacing: -0.01em; }
+.tn-empty-title { font-size: 17px; font-weight: 700; color: var(--text); letter-spacing: 0; }
 .tn-empty-text { margin: 0; font-size: 14px; line-height: 1.6; }
 /* /mobius-ui:Empty */
 
@@ -86,12 +109,12 @@ button.tn-card { cursor: pointer; }
 button.tn-card:active { transform: scale(0.992); }
 button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .tn-card-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
-.tn-card-title { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
+.tn-card-title { font-size: 15px; font-weight: 700; letter-spacing: 0; }
 .tn-card-sub { font-size: 12px; font-weight: 500; color: var(--muted); }
 .tn-card-badge {
   flex: 0 0 auto; font-size: 11px; font-weight: 700; padding: 3px 8px;
   border-radius: 6px; background: color-mix(in srgb, var(--accent) 14%, transparent);
-  color: var(--accent); letter-spacing: 0.03em;
+  color: var(--accent); letter-spacing: 0;
 }
 /* /mobius-ui:Card */
 
@@ -156,12 +179,12 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
   overflow-y: auto;
   padding: 24px 24px max(24px, env(safe-area-inset-bottom, 0px));
   background: var(--surface); border: 1px solid var(--border);
-  border-radius: 16px 16px 0 0; box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.3);
+  border-radius: 16px 16px 0 0; box-shadow: 0 -4px 8px rgba(0, 0, 0, 0.28);
   display: flex; flex-direction: column; gap: 12px;
   overscroll-behavior: contain;
   scroll-padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
 }
-.tn-sheet-title { margin: 0 0 4px; font-size: 16px; font-weight: 700; letter-spacing: -0.01em; }
+.tn-sheet-title { margin: 0 0 4px; font-size: 16px; font-weight: 700; letter-spacing: 0; }
 .tn-sheet-sub { margin: 0 0 8px; font-size: 14px; color: var(--muted); line-height: 1.5; }
 .tn-sheet-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
 .tn-sheet-actions .tn-btn { flex: 1; }
@@ -273,7 +296,7 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
   font-size: 11px; font-weight: 700; padding: 2px 7px;
   border-radius: 5px;
   background: color-mix(in srgb, var(--accent) 12%, transparent);
-  color: var(--accent); letter-spacing: 0.04em;
+  color: var(--accent); letter-spacing: 0;
 }
 
 /* Reader — full-bleed overlay anchored to the app root */
@@ -344,12 +367,7 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
      makes offsetTop pane-relative, fixing the asymmetry for both. */
   position: relative;
 }
-.tn-pane::-webkit-scrollbar { width: 9px; height: 9px; }
-.tn-pane::-webkit-scrollbar-thumb {
-  background: var(--border); border-radius: 8px;
-  border: 2px solid transparent; background-clip: padding-box;
-}
-.tn-pane::-webkit-scrollbar-track { background: transparent; }
+.tn-pane::-webkit-scrollbar { display: none; width: 0; height: 0; }
 
 .tn-pane-top { border-bottom: 1px solid var(--border); }
 .tn-pane-bottom {}
@@ -388,7 +406,7 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
   border-bottom: 1px solid var(--border-light, var(--border));
 }
 .tn-story-title-a {
-  font-size: 20px; font-weight: 800; letter-spacing: -0.02em;
+  font-size: 20px; font-weight: 800; letter-spacing: 0;
   line-height: 1.2; margin: 0 0 3px;
 }
 .tn-story-title-b {
@@ -521,21 +539,15 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 @media (prefers-reduced-motion: reduce) { .tn-spinner { animation: none; } }
 .tn-loading { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 48px 24px; color: var(--muted); font-size: 13px; }
 
-/* Scrollskin */
-.tn-scroll::-webkit-scrollbar { width: 9px; height: 9px; }
-.tn-scroll::-webkit-scrollbar-thumb {
-  background: var(--border); border-radius: 8px;
-  border: 2px solid transparent; background-clip: padding-box;
-}
-.tn-scroll::-webkit-scrollbar-track { background: transparent; }
+/* Scrollskin lives in the shared mobius-ui:Scrollskin block above. */
 
 /* Settings sheet — provider-grouped model picker (mirrors app-news) */
 .tn-model-list { display: flex; flex-direction: column; gap: 10px; }
 .tn-model-group { display: flex; flex-direction: column; gap: 6px; }
 .tn-model-group-header {
   display: flex; align-items: center; gap: 8px;
-  font-size: 12px; font-weight: 700;
-  text-transform: uppercase; letter-spacing: 0.6px;
+  font-size: 12px; font-weight: 600;
+  text-transform: none; letter-spacing: 0;
   color: var(--muted); margin: 2px 2px 2px;
   user-select: none;
 }
