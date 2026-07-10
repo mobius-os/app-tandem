@@ -50,6 +50,7 @@ export function GenerateSheet({ onGenerate, onCancel, initialLangA, initialLangB
           <label className="tn-setup-label" htmlFor="tn-gen-lang-a">Language you know</label>
           <input
             id="tn-gen-lang-a"
+            name="language_known"
             className="tn-input"
             value={langA}
             onChange={(e) => setLangA(e.target.value)}
@@ -61,6 +62,7 @@ export function GenerateSheet({ onGenerate, onCancel, initialLangA, initialLangB
           <label className="tn-setup-label" htmlFor="tn-gen-lang-b">Language you're learning</label>
           <input
             id="tn-gen-lang-b"
+            name="language_learning"
             className="tn-input"
             value={langB}
             onChange={(e) => setLangB(e.target.value)}
@@ -72,6 +74,7 @@ export function GenerateSheet({ onGenerate, onCancel, initialLangA, initialLangB
           <label className="tn-setup-label" htmlFor="tn-gen-level">Level (CEFR)</label>
           <select
             id="tn-gen-level"
+            name="level"
             className="tn-select"
             value={level}
             onChange={(e) => setLevel(e.target.value)}
@@ -88,6 +91,7 @@ export function GenerateSheet({ onGenerate, onCancel, initialLangA, initialLangB
           <label className="tn-setup-label" htmlFor="tn-gen-prompt">What story would you like? (optional)</label>
           <textarea
             id="tn-gen-prompt"
+            name="story_prompt"
             className="tn-textarea"
             value={promptInput}
             onChange={(e) => setPromptInput(e.target.value)}

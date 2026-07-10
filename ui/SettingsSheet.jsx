@@ -87,7 +87,7 @@ export function SettingsSheet({ token, prefs, onSelectModel, onClose }) {
       <div className="tn-sheet" ref={sheetRef} onClick={(e) => e.stopPropagation()}>
         <p className="tn-sheet-title" id="tn-settings-title">Settings</p>
         <div>
-          <div className="tn-setup-label">Story generation agent</div>
+          <div className="tn-setup-label" id="tn-model-picker-label">Story generation agent</div>
           <p className="tn-setup-note">
             Which model writes new stories. The list follows your chat model
             visibility settings.
@@ -97,7 +97,7 @@ export function SettingsSheet({ token, prefs, onSelectModel, onClose }) {
               <div className="tn-spinner tn-spinner-sm" role="status" aria-label="Loading models" />
             </div>
           ) : (
-            <div className="tn-model-list" role="radiogroup" aria-label="Story generation agent">
+            <div className="tn-model-list" role="group" aria-labelledby="tn-model-picker-label">
               {providerGroups.map((group) => {
                 const connected = !connectedProviders || connectedProviders.has(group.key)
                 return (
@@ -114,8 +114,7 @@ export function SettingsSheet({ token, prefs, onSelectModel, onClose }) {
                           key={`${group.key}-${m.id}`}
                           type="button"
                           className={`tn-model-row${on ? ' is-selected' : ''}`}
-                          role="radio"
-                          aria-checked={on}
+                          aria-pressed={on}
                           disabled={disabled}
                           onClick={() => onSelectModel(group.key, m.id)}
                         >
@@ -133,7 +132,7 @@ export function SettingsSheet({ token, prefs, onSelectModel, onClose }) {
             </div>
           )}
           {modelsFailed && providerGroups !== null && (
-            <p className="tn-setup-note tn-model-fallback-note">
+            <p className="tn-setup-note tn-model-fallback-note" role="status" aria-live="polite">
               Couldn&apos;t load the live model list — showing a short fallback.
               New stories still generate fine.
             </p>

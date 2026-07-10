@@ -253,7 +253,7 @@ export function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, 
   return (
     <div className="tn-list-wrap">
       {!online && (
-        <div className="tn-offline-banner">
+        <div className="tn-offline-banner" role="status" aria-live="polite">
           Offline — showing saved stories. New stories resume once you're back online.
         </div>
       )}
@@ -268,8 +268,12 @@ export function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, 
         >
           {genBusy ? 'Generating…' : '+ Generate story'}
         </button>
-        {gen.phase === 'done' && <span className="tn-status-hint">Story ready!</span>}
-        {errorMsg && <span className="tn-error-hint">{errorMsg}</span>}
+        {gen.phase === 'done' && (
+          <span className="tn-status-hint" role="status" aria-live="polite">Story ready!</span>
+        )}
+        {errorMsg && (
+          <span className="tn-error-hint" role="alert" aria-live="assertive">{errorMsg}</span>
+        )}
       </div>
 
       {/* In-progress placeholder card — the new story's seat at the top of

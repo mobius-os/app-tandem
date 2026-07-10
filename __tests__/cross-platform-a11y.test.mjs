@@ -46,3 +46,41 @@ test('fixed bars and sheets account for standalone PWA safe areas', () => {
   assert.match(css, /\.tn-reader-bar[\s\S]*env\(safe-area-inset-top/)
   assert.match(css, /\.tn-rate-bar[\s\S]*env\(safe-area-inset-bottom/)
 })
+
+test('reader resize and word lookup stay keyboard accessible without tab spam', () => {
+  const reader = read('ui', 'StoryReader.jsx')
+  assert.match(reader, /role="separator"/)
+  assert.match(reader, /tabIndex=\{0\}/)
+  assert.match(reader, /aria-valuemin=\{MIN_SPLIT_RATIO \* 100\}/)
+  assert.match(reader, /aria-valuenow=\{Math\.round\(splitRatio \* 100\)\}/)
+  assert.match(reader, /onKeyDown=\{handleDividerKeyDown\}/)
+  assert.match(reader, /case 'ArrowUp':/)
+  assert.match(reader, /case 'PageDown':/)
+  assert.match(reader, /case 'Home':/)
+
+  const para = read('ui', 'ParaText.jsx')
+  assert.match(para, /tabIndex=\{tok\.wordIdx === tabWordIdx \? 0 : -1\}/)
+  assert.match(para, /case 'ArrowRight':/)
+  assert.match(para, /case 'End':/)
+  assert.doesNotMatch(para, /tabIndex=\{0\}/, 'every word must not be a separate tab stop')
+})
+
+test('transient UI states announce and settings avoid incomplete radio semantics', () => {
+  const setup = read('ui', 'SetupView.jsx')
+  assert.match(setup, /role="alert" aria-live="assertive"/)
+  assert.match(setup, /aria-busy=\{saving\}/)
+
+  const library = read('ui', 'LibraryTab.jsx')
+  assert.match(library, /tn-offline-banner" role="status" aria-live="polite"/)
+  assert.match(library, /tn-status-hint" role="status" aria-live="polite"/)
+  assert.match(library, /tn-error-hint" role="alert" aria-live="assertive"/)
+
+  const settings = read('ui', 'SettingsSheet.jsx')
+  assert.doesNotMatch(settings, /radiogroup/)
+  assert.doesNotMatch(settings, /role="radio"/)
+  assert.match(settings, /aria-pressed=\{on\}/)
+  assert.match(settings, /tn-model-fallback-note" role="status" aria-live="polite"/)
+
+  const reader = read('ui', 'StoryReader.jsx')
+  assert.match(reader, /className="tn-rate-bar is-noted"[\s\S]*role="status"[\s\S]*aria-live="polite"/)
+})

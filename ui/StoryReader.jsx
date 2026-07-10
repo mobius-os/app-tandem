@@ -7,14 +7,22 @@ import { signal } from '../signals.js'
 import { ParaText } from './ParaText.jsx'
 
 const DEFAULT_SPLIT_RATIO = 0.58
+const MIN_SPLIT_RATIO = 0.2
+const MAX_SPLIT_RATIO = 0.8
+const SPLIT_KEY_STEP = 0.03
+const SPLIT_KEY_LARGE_STEP = 0.1
 const SPLIT_RATIO_KEY = 'tn-split-ratio-v2'
 const LEGACY_SPLIT_RATIO_KEY = 'tn-split-ratio'
+
+function clampSplitRatio(value) {
+  return Math.min(MAX_SPLIT_RATIO, Math.max(MIN_SPLIT_RATIO, value))
+}
 
 function readInitialSplitRatio() {
   const read = (key) => {
     try {
       const v = parseFloat(localStorage.getItem(key))
-      return v >= 0.2 && v <= 0.8 ? v : null
+      return v >= MIN_SPLIT_RATIO && v <= MAX_SPLIT_RATIO ? v : null
     } catch {
       return null
     }
@@ -161,11 +169,41 @@ export function StoryReader({ story, onClose, onRate }) {
     if (!body) return
     const rect = body.getBoundingClientRect()
     const newRatio = (e.clientY - rect.top) / rect.height
-    setSplitRatio(Math.min(0.8, Math.max(0.2, newRatio)))
+    setSplitRatio(clampSplitRatio(newRatio))
   }, [])
 
   const handleDividerPointerUp = useCallback((e) => {
     e.currentTarget.releasePointerCapture(e.pointerId)
+  }, [])
+
+  const handleDividerKeyDown = useCallback((e) => {
+    let nextRatio = null
+    switch (e.key) {
+      case 'ArrowUp':
+      case 'ArrowLeft':
+        nextRatio = (current) => current - SPLIT_KEY_STEP
+        break
+      case 'ArrowDown':
+      case 'ArrowRight':
+        nextRatio = (current) => current + SPLIT_KEY_STEP
+        break
+      case 'PageUp':
+        nextRatio = (current) => current - SPLIT_KEY_LARGE_STEP
+        break
+      case 'PageDown':
+        nextRatio = (current) => current + SPLIT_KEY_LARGE_STEP
+        break
+      case 'Home':
+        nextRatio = () => MIN_SPLIT_RATIO
+        break
+      case 'End':
+        nextRatio = () => MAX_SPLIT_RATIO
+        break
+      default:
+        return
+    }
+    e.preventDefault()
+    setSplitRatio((current) => clampSplitRatio(nextRatio(current)))
   }, [])
 
   const handleWordTap = useCallback((paraIdx, lang, tok) => {
@@ -262,6 +300,15 @@ export function StoryReader({ story, onClose, onRate }) {
     onRate(story, verdict)
   }, [story, onRate])
 
+  useEffect(() => {
+    if (!showNoted) return undefined
+    const reduceMotion = typeof window !== 'undefined'
+      && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    if (!reduceMotion) return undefined
+    const timer = window.setTimeout(() => setShowNoted(false), 1800)
+    return () => window.clearTimeout(timer)
+  }, [showNoted])
+
   const langA = story.lang_a
   const langB = story.lang_b
 
@@ -329,11 +376,17 @@ export function StoryReader({ story, onClose, onRate }) {
           onPointerMove={handleDividerPointerMove}
           onPointerUp={handleDividerPointerUp}
           onPointerCancel={handleDividerPointerUp}
-          aria-label="Drag to resize panes"
+          onKeyDown={handleDividerKeyDown}
+          aria-label="Resize story panes"
           role="separator"
           aria-orientation="horizontal"
+          aria-valuemin={MIN_SPLIT_RATIO * 100}
+          aria-valuemax={MAX_SPLIT_RATIO * 100}
+          aria-valuenow={Math.round(splitRatio * 100)}
+          aria-valuetext={`Top pane ${Math.round(splitRatio * 100)}%, bottom pane ${Math.round((1 - splitRatio) * 100)}%`}
+          tabIndex={0}
         >
-          <div className="tn-divider-pip" />
+          <div className="tn-divider-pip" aria-hidden="true" />
         </div>
 
         {/* BOTTOM PANE */}
@@ -412,6 +465,8 @@ export function StoryReader({ story, onClose, onRate }) {
       {rating && showNoted && (
         <div
           className="tn-rate-bar is-noted"
+          role="status"
+          aria-live="polite"
           onAnimationEnd={() => setShowNoted(false)}
         >
           <span className="tn-rate-note">Noted — the next story will adapt.</span>

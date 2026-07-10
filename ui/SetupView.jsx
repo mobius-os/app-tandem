@@ -50,6 +50,7 @@ export function SetupView({ appId, token, prefs, onPrefsChange }) {
         <p className="tn-setup-note">Your native or strongest language (e.g. English, French, Mandarin).</p>
         <input
           id="tn-lang-a"
+          name="language_known"
           className="tn-input"
           value={langA}
           onChange={(e) => setLangA(e.target.value)}
@@ -63,6 +64,7 @@ export function SetupView({ appId, token, prefs, onPrefsChange }) {
         <p className="tn-setup-note">The language you want to read stories in (e.g. Spanish, Japanese, German).</p>
         <input
           id="tn-lang-b"
+          name="language_learning"
           className="tn-input"
           value={langB}
           onChange={(e) => setLangB(e.target.value)}
@@ -76,6 +78,7 @@ export function SetupView({ appId, token, prefs, onPrefsChange }) {
         <p className="tn-setup-note">A rough estimate is fine — Tandem adapts based on your ratings.</p>
         <select
           id="tn-level"
+          name="level"
           className="tn-select"
           value={level}
           onChange={(e) => setLevel(e.target.value)}
@@ -89,15 +92,16 @@ export function SetupView({ appId, token, prefs, onPrefsChange }) {
         </select>
       </div>
 
-      {error && <div className="tn-error-toast">{error}</div>}
+      {error && <div className="tn-error-toast" role="alert" aria-live="assertive">{error}</div>}
 
       <button
         type="button"
         className="tn-btn tn-btn-primary tn-full-width"
         onClick={handleSave}
         disabled={saving}
+        aria-busy={saving}
       >
-        Start reading
+        {saving ? 'Saving…' : 'Start reading'}
       </button>
     </div>
   )
