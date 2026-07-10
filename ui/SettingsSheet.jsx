@@ -1,20 +1,17 @@
 import { useState, useEffect, useRef } from 'react'
 import { FALLBACK_GROUPS, normalizeGenProvider, normalizeGenModel, buildProviderGroups } from '../gen-model.mjs'
-import { loadProviderModels, loadProviderStatus } from '../storage.js'
+import { loadProviderModels, loadProviderStatus, savePrefs } from '../storage.js'
 import { signalError } from '../signals.js'
 import { useModalFocus } from './useModalFocus.js'
 import { useShellBackTarget } from './useShellBackTarget.js'
 
 // ---------------------------------------------------------------------------
-// SettingsSheet — the app's one settings surface (everything else moved into
-// the generate sheet). Holds only the story-generation agent: a provider-grouped
-// model picker (Claude / OpenAI Codex), matching app-news. Models are fetched
-// from `GET /api/auth/providers/models`; provider connection state from
-// `GET /api/auth/providers/status`. A tap selects AND persists immediately
-// (prefs.gen_provider + prefs.gen_model); Done just closes. Endpoint failure
-// degrades to FALLBACK_GROUPS / "Default only" — never blocks anything.
+// SettingsSheet — the app's one setup surface after first run. Language
+// defaults + level save when Done closes the sheet; the story-generation agent
+// still persists immediately on tap. Endpoint failure degrades to
+// FALLBACK_GROUPS / "Default only" — never blocks reading or generation.
 // ---------------------------------------------------------------------------
-export function SettingsSheet({ token, prefs, onSelectModel, onClose }) {
+export function SettingsSheet({ appId, token, prefs, onPrefsChange, onSelectModel, onClose }) {
   const sheetRef = useRef(null)
   const doneRef = useRef(null)
   // Land on Done, not the first model radio: this is a settings surface, not
@@ -23,6 +20,11 @@ export function SettingsSheet({ token, prefs, onSelectModel, onClose }) {
   useShellBackTarget('tandem-settings-sheet', onClose)
   const storedProvider = normalizeGenProvider(prefs)
   const storedModel = normalizeGenModel(prefs)
+  const [langA, setLangA] = useState(prefs.lang_a || 'English')
+  const [langB, setLangB] = useState(prefs.lang_b || '')
+  const [level, setLevel] = useState(prefs.level || 'B1')
+  const [savingDefaults, setSavingDefaults] = useState(false)
+  const [defaultsError, setDefaultsError] = useState('')
   // null = still loading; otherwise the provider groups (FALLBACK_GROUPS or the
   // stitched live list).
   const [providerGroups, setProviderGroups] = useState(null)
@@ -81,11 +83,95 @@ export function SettingsSheet({ token, prefs, onSelectModel, onClose }) {
     }
   }
 
+  const defaultsChanged =
+    langA.trim() !== (prefs.lang_a || 'English') ||
+    langB.trim() !== (prefs.lang_b || '') ||
+    level !== (prefs.level || 'B1')
+
+  const handleDone = async () => {
+    if (!defaultsChanged) {
+      onClose()
+      return
+    }
+    const a = langA.trim()
+    const b = langB.trim()
+    if (!a || !b) {
+      setDefaultsError('Please fill in both languages.')
+      return
+    }
+    setSavingDefaults(true)
+    setDefaultsError('')
+    const next = { ...prefs, lang_a: a, lang_b: b, level }
+    let res
+    try {
+      res = await savePrefs(appId, token, next)
+    } catch {
+      res = { ok: false }
+    }
+    setSavingDefaults(false)
+    if (res && (res.synced || res.queued)) {
+      onPrefsChange(next)
+      onClose()
+      return
+    }
+    setDefaultsError('Could not save preferences. Try again.')
+    signalError('Could not save preferences.', 'settings.defaults')
+  }
+
   return (
     <div className="tn-scrim" onClick={onClose} role="dialog" aria-modal="true"
       aria-labelledby="tn-settings-title" onKeyDown={onKeyDown}>
       <div className="tn-sheet" ref={sheetRef} onClick={(e) => e.stopPropagation()}>
         <p className="tn-sheet-title" id="tn-settings-title">Settings</p>
+        <div>
+          <div className="tn-setup-label">Reading defaults</div>
+          <p className="tn-setup-note">
+            Used for the next story sheet. You can still adjust each story before generating.
+          </p>
+          <div className="tn-settings-grid">
+            <label className="tn-settings-field" htmlFor="tn-settings-lang-a">
+              <span>Language you know</span>
+              <input
+                id="tn-settings-lang-a"
+                name="settings_language_known"
+                className="tn-input"
+                value={langA}
+                onChange={(e) => setLangA(e.target.value)}
+                placeholder="e.g. English"
+                autoComplete="off"
+              />
+            </label>
+            <label className="tn-settings-field" htmlFor="tn-settings-lang-b">
+              <span>Learning</span>
+              <input
+                id="tn-settings-lang-b"
+                name="settings_language_learning"
+                className="tn-input"
+                value={langB}
+                onChange={(e) => setLangB(e.target.value)}
+                placeholder="e.g. Spanish"
+                autoComplete="off"
+              />
+            </label>
+            <label className="tn-settings-field" htmlFor="tn-settings-level">
+              <span>Level</span>
+              <select
+                id="tn-settings-level"
+                name="settings_level"
+                className="tn-select"
+                value={level}
+                onChange={(e) => setLevel(e.target.value)}
+              >
+                <option value="A1">A1 — Beginner</option>
+                <option value="A2">A2 — Elementary</option>
+                <option value="B1">B1 — Intermediate</option>
+                <option value="B2">B2 — Upper intermediate</option>
+                <option value="C1">C1 — Advanced</option>
+                <option value="C2">C2 — Mastery</option>
+              </select>
+            </label>
+          </div>
+        </div>
         <div>
           <div className="tn-setup-label" id="tn-model-picker-label">Story generation agent</div>
           <p className="tn-setup-note">
@@ -137,9 +223,23 @@ export function SettingsSheet({ token, prefs, onSelectModel, onClose }) {
               New stories still generate fine.
             </p>
           )}
+          {defaultsError && (
+            <div className="tn-error-toast" role="alert" aria-live="assertive">
+              {defaultsError}
+            </div>
+          )}
         </div>
         <div className="tn-sheet-actions">
-          <button type="button" className="tn-btn tn-btn-primary" ref={doneRef} onClick={onClose}>Done</button>
+          <button
+            type="button"
+            className="tn-btn tn-btn-primary"
+            ref={doneRef}
+            onClick={handleDone}
+            disabled={savingDefaults}
+            aria-busy={savingDefaults}
+          >
+            {savingDefaults ? 'Saving…' : 'Done'}
+          </button>
         </div>
       </div>
     </div>

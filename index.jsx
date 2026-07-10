@@ -142,8 +142,10 @@ export default function App({ appId, token }) {
 
       {showSettings && (
         <SettingsSheet
+          appId={appId}
           token={token}
           prefs={prefs}
+          onPrefsChange={setPrefs}
           onSelectModel={handleSelectModel}
           onClose={() => setShowSettings(false)}
         />

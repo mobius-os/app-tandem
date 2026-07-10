@@ -574,6 +574,27 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .tn-full-width { width: 100%; }
 .tn-prompt-hint { margin: 6px 0 0; }
 .tn-model-fallback-note { margin-top: 8px; }
+.tn-settings-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(96px, 0.55fr);
+  gap: 10px;
+}
+.tn-settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.tn-settings-field > span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+@media (max-width: 560px) {
+  .tn-settings-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 
 /* Toasts + destructive button */
 .tn-error-toast { font-size: 12px; color: var(--danger); }
