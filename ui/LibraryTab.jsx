@@ -15,7 +15,7 @@ import { TrashIcon } from './Icons.jsx'
 // generation engine live in App (they must outlive any view), so they arrive
 // as props.
 // ---------------------------------------------------------------------------
-export function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, onIndexChange, mutateIndex, gen }) {
+export function LibraryTab({ appId, token, online, prefs, onPrefsChange, onSetupComplete, index, onIndexChange, mutateIndex, gen }) {
   const [stories, setStories] = useState({})
   const [activeStory, setActiveStory] = useState(null)
   const [errorMsg, setErrorMsg] = useState('')
@@ -241,7 +241,7 @@ export function LibraryTab({ appId, token, online, prefs, onPrefsChange, index, 
         token={token}
         prefs={prefs}
         onPrefsChange={onPrefsChange}
-        onComplete={() => {}} // parent will re-render
+        onComplete={onSetupComplete}
       />
     )
   }

@@ -14,6 +14,24 @@ import { GearIcon } from './ui/Icons.jsx'
 import { LibraryTab } from './ui/LibraryTab.jsx'
 import { SettingsSheet } from './ui/SettingsSheet.jsx'
 
+const SETUP_COMPLETIONS_KEY = 'mobius:setup-complete:v1'
+
+function markSetupComplete(appId) {
+  if (appId == null || typeof window === 'undefined') return
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(SETUP_COMPLETIONS_KEY) || '{}')
+    const data = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+    data[String(appId)] = { completedAt: new Date().toISOString() }
+    window.localStorage.setItem(SETUP_COMPLETIONS_KEY, JSON.stringify(data))
+  } catch {}
+  if (window.parent && window.parent !== window) {
+    window.parent.postMessage(
+      { type: 'moebius:setup-complete', appId },
+      window.location.origin,
+    )
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Root component. Languages and level are chosen per-generation in the
 // generate sheet (and remembered in prefs), so the library IS the app; the
@@ -47,8 +65,20 @@ export default function App({ appId, token }) {
     if (id) next.gen_model = id
     else delete next.gen_model
     setPrefs(next)
-    await savePrefs(appId, token, next)
+    const res = await savePrefs(appId, token, next)
+    if (res && (res.synced || res.queued)) markSetupComplete(appId)
   }, [appId, token, prefs])
+
+  useEffect(() => {
+    function onMessage(e) {
+      if (e.origin !== window.location.origin) return
+      if (e.data?.type === 'moebius:app-intent' && e.data.intent === 'setup') {
+        setShowSettings(true)
+      }
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+  }, [])
 
   // Load prefs + story index on mount. The "Default" generation row was removed
   // from the picker, so a user who was sitting on it (empty/missing gen_model)
@@ -133,6 +163,7 @@ export default function App({ appId, token }) {
           online={online}
           prefs={prefs}
           onPrefsChange={setPrefs}
+          onSetupComplete={() => markSetupComplete(appId)}
           index={index}
           onIndexChange={setIndex}
           mutateIndex={mutateIndex}
@@ -147,6 +178,7 @@ export default function App({ appId, token }) {
           prefs={prefs}
           onPrefsChange={setPrefs}
           onSelectModel={handleSelectModel}
+          onSetupComplete={() => markSetupComplete(appId)}
           onClose={() => setShowSettings(false)}
         />
       )}

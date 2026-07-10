@@ -5,7 +5,7 @@ import { signalError } from '../signals.js'
 // ---------------------------------------------------------------------------
 // SetupView — first-run language collection.
 // ---------------------------------------------------------------------------
-export function SetupView({ appId, token, prefs, onPrefsChange }) {
+export function SetupView({ appId, token, prefs, onPrefsChange, onComplete }) {
   const [langA, setLangA] = useState(prefs.lang_a || 'English')
   const [langB, setLangB] = useState(prefs.lang_b || '')
   const [level, setLevel] = useState(prefs.level || 'B1')
@@ -28,11 +28,12 @@ export function SetupView({ appId, token, prefs, onPrefsChange }) {
     setSaving(false)
     if (res && (res.synced || res.queued)) {
       onPrefsChange(next)
+      onComplete?.()
     } else {
       setError('Could not save preferences. Try again.')
       signalError('Could not save preferences.', 'setup')
     }
-  }, [appId, token, prefs, langA, langB, level, onPrefsChange])
+  }, [appId, token, prefs, langA, langB, level, onPrefsChange, onComplete])
 
   return (
     <div className="tn-setup-wrap">

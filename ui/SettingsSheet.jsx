@@ -11,7 +11,7 @@ import { useShellBackTarget } from './useShellBackTarget.js'
 // still persists immediately on tap. Endpoint failure degrades to
 // FALLBACK_GROUPS / "Default only" — never blocks reading or generation.
 // ---------------------------------------------------------------------------
-export function SettingsSheet({ appId, token, prefs, onPrefsChange, onSelectModel, onClose }) {
+export function SettingsSheet({ appId, token, prefs, onPrefsChange, onSelectModel, onSetupComplete, onClose }) {
   const sheetRef = useRef(null)
   const doneRef = useRef(null)
   // Land on Done, not the first model radio: this is a settings surface, not
@@ -111,6 +111,7 @@ export function SettingsSheet({ appId, token, prefs, onPrefsChange, onSelectMode
     setSavingDefaults(false)
     if (res && (res.synced || res.queued)) {
       onPrefsChange(next)
+      onSetupComplete?.()
       onClose()
       return
     }
