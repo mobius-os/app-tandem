@@ -21,8 +21,13 @@ function markSetupComplete(appId) {
   try {
     const parsed = JSON.parse(window.localStorage.getItem(SETUP_COMPLETIONS_KEY) || '{}')
     const data = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+    // Top-of-funnel signal: fire only on the FIRST completion for this install.
+    // markSetupComplete also runs on every model re-selection in Settings, so an
+    // unguarded signal would count returning users and defeat the drop-off metric.
+    const firstCompletion = !Object.prototype.hasOwnProperty.call(data, String(appId))
     data[String(appId)] = { completedAt: new Date().toISOString() }
     window.localStorage.setItem(SETUP_COMPLETIONS_KEY, JSON.stringify(data))
+    if (firstCompletion) signal('setup_completed')
   } catch {}
   if (window.parent && window.parent !== window) {
     window.parent.postMessage(
