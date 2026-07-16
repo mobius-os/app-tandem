@@ -137,6 +137,38 @@ export function findPhraseTokenRange(tokens, phrase) {
   return null
 }
 
+// Find a phrase occurrence that contains a specific tapped word. A glossary
+// phrase can contain a common word ("a hundred", "to pay attention") while
+// that same word appears several other times in the paragraph. Looking up by
+// word value alone makes every occurrence resolve to the phrase, even when the
+// reader tapped an unrelated "a" or "to". This occurrence-aware variant only
+// returns a match when the tapped token is actually inside the matched phrase.
+export function findPhraseTokenRangeAt(tokens, phrase, wordIdx) {
+  if (!Number.isInteger(wordIdx) || wordIdx < 0) return null
+  if (typeof phrase !== 'string' || !phrase.trim()) return null
+  const target = phrase
+    .trim()
+    .split(/\s+/)
+    .map((w) => stripWordPunct(w).toLowerCase())
+    .filter(Boolean)
+  if (target.length === 0) return null
+  const words = tokens.filter((t) => t.isWord)
+  for (let i = 0; i + target.length <= words.length; i++) {
+    const start = words[i].wordIdx
+    const end = words[i + target.length - 1].wordIdx
+    if (wordIdx < start || wordIdx > end) continue
+    let match = true
+    for (let j = 0; j < target.length; j++) {
+      if (!tokensLooselyMatch(words[i + j].text, target[j])) {
+        match = false
+        break
+      }
+    }
+    if (match) return { start, end }
+  }
+  return null
+}
+
 export function sentenceText(tokens, sentIdx) {
   if (!Array.isArray(tokens) || !Number.isInteger(sentIdx) || sentIdx < 0) return ''
   return tokens
@@ -144,25 +176,4 @@ export function sentenceText(tokens, sentIdx) {
     .map((t) => t.text)
     .join('')
     .trim()
-}
-
-// When a tapped word is not in the generated glossary, offer a non-authoritative
-// cue from the aligned sentence: same relative word position in the translated
-// sentence, plus the full translated sentence. This keeps taps from feeling
-// dead while making the real glossary match visually stronger elsewhere.
-export function inferAlignedCue(srcText, dstText, srcWordIdx, srcSentIdx) {
-  const srcTokens = tokenizeParagraph(srcText)
-  const dstTokens = tokenizeParagraph(dstText)
-  const dstSentIdx = alignSentenceIndex(srcSentIdx, sentenceCount(dstTokens))
-  const sentence = sentenceText(dstTokens, dstSentIdx)
-  if (dstSentIdx < 0) return { word: '', sentence: '' }
-  const srcWords = srcTokens.filter((t) => t.isWord && t.sentIdx === srcSentIdx)
-  const dstWords = dstTokens.filter((t) => t.isWord && t.sentIdx === dstSentIdx)
-  const srcPos = srcWords.findIndex((t) => t.wordIdx === srcWordIdx)
-  if (srcPos < 0 || srcWords.length < 1 || dstWords.length < 1) {
-    return { word: '', sentence }
-  }
-  const ratio = (srcPos + 0.5) / srcWords.length
-  const dstPos = Math.min(dstWords.length - 1, Math.max(0, Math.floor(ratio * dstWords.length)))
-  return { word: stripWordPunct(dstWords[dstPos].text), sentence }
 }

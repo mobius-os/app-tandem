@@ -9,7 +9,11 @@
 // highlight side uses (stripWordPunct from text-align.mjs). index.jsx
 // already inlines stripWordPunct in its INLINE-TEXT-ALIGN block, so the
 // inline copy of lookupGlossary calls it directly without this import.
-import { stripWordPunct, tokensLooselyMatch } from './text-align.mjs'
+import {
+  findPhraseTokenRangeAt,
+  stripWordPunct,
+  tokenizeParagraph,
+} from './text-align.mjs'
 
 export const CEFR_LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2']
 
@@ -39,27 +43,27 @@ export function adaptLevel(currentLevel, feedbackHistory) {
   return currentLevel
 }
 
-// Find the glossary entry for a given word in paragraph `para`.
-// Matches a tapped word against glossary terms by WHOLE-WORD token equality
-// (not substring) so a short word never collides with a longer unrelated
-// term — tapping "a" must not hit "pospanom", tapping "mill" must not hit
-// "miller". Multi-word terms (e.g. "se sentó") match if any of their tokens
-// equals the needle. Uses the same stripWordPunct normalization as the
-// highlight side, so "word," and "word." resolve to the same token.
-// Also accepts conservative inflection/plural matches for longer words so a
-// glossary base form still helps when the story text uses a case/conjugation.
-// Returns the matching glossary entry object, or null.
-export function lookupGlossary(para, word) {
+// Find the glossary entry for the exact occurrence a reader tapped. Lookup is
+// directional (only the term for the tapped language is considered) and
+// occurrence-aware: a common word inside "a hundred" must not make every other
+// "a" in the paragraph resolve to that entry. Slash-separated alternatives in
+// generated terms ("figures / numbers") are checked independently.
+export function lookupGlossary(para, word, lang, wordIdx) {
   if (!para || !Array.isArray(para.glossary)) return null
   if (typeof word !== 'string' || !word.trim()) return null
+  if (lang !== 'a' && lang !== 'b') return null
+  if (!Number.isInteger(wordIdx) || wordIdx < 0) return null
   const needle = stripWordPunct(word)
   if (!needle) return null
-  const tokensOf = (term) =>
-    String(term).split(/\s+/).map((w) => stripWordPunct(w)).filter(Boolean)
-  return para.glossary.find((entry) =>
-    (typeof entry.word_a === 'string' && tokensOf(entry.word_a).some((w) => tokensLooselyMatch(w, needle))) ||
-    (typeof entry.word_b === 'string' && tokensOf(entry.word_b).some((w) => tokensLooselyMatch(w, needle))),
-  ) || null
+  const text = typeof para[lang] === 'string' ? para[lang] : ''
+  const tokens = tokenizeParagraph(text)
+  const termKey = lang === 'a' ? 'word_a' : 'word_b'
+  return para.glossary.find((entry) => {
+    if (typeof entry?.[termKey] !== 'string') return false
+    return entry[termKey]
+      .split(/\s*\/\s*/)
+      .some((alternative) => Boolean(findPhraseTokenRangeAt(tokens, alternative, wordIdx)))
+  }) || null
 }
 
 // Validate a parsed story object, returning a normalized version or null.

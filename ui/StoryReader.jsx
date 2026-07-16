@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { inferAlignedCue, stripWordPunct } from '../text-align.mjs'
+import { sentenceText, stripWordPunct, tokenizeParagraph } from '../text-align.mjs'
 import { lookupGlossary } from '../story-schema.mjs'
 import { computeParaOffsets, computeSyncScrollTop, computeProportionalScrollTop, clampScrollTargetToView } from '../scroll-sync.mjs'
 import { RATE_OPTIONS } from '../constants.js'
@@ -13,6 +13,7 @@ const SPLIT_KEY_STEP = 0.03
 const SPLIT_KEY_LARGE_STEP = 0.1
 const SPLIT_RATIO_KEY = 'tn-split-ratio-v2'
 const LEGACY_SPLIT_RATIO_KEY = 'tn-split-ratio'
+const WIDE_READER_QUERY = '(min-width: 720px)'
 
 function clampSplitRatio(value) {
   return Math.min(MAX_SPLIT_RATIO, Math.max(MIN_SPLIT_RATIO, value))
@@ -37,6 +38,10 @@ function readInitialSplitRatio() {
   return DEFAULT_SPLIT_RATIO
 }
 
+function readInitialWideReader() {
+  return typeof window !== 'undefined' && window.matchMedia?.(WIDE_READER_QUERY).matches
+}
+
 export function StoryReader({ story, onClose, onRate }) {
   // The TARGET language (lang_b, the one being learned) leads by default — it
   // sits in the top pane and titles, with the base language (lang_a) below as
@@ -51,6 +56,7 @@ export function StoryReader({ story, onClose, onRate }) {
   const [showNoted, setShowNoted] = useState(false)
   const atEndRef = useRef(false)
   const [splitRatio, setSplitRatio] = useState(readInitialSplitRatio)
+  const [wideReader, setWideReader] = useState(readInitialWideReader)
   // Inline word-tap highlight:
   // { paraIdx, lang, wordIdx, sentIdx, sourceWord, otherWord, otherSentence, note, matchKind }
   const [highlight, setHighlight] = useState(null)
@@ -84,6 +90,15 @@ export function StoryReader({ story, onClose, onRate }) {
   useEffect(() => {
     try { localStorage.setItem(SPLIT_RATIO_KEY, String(splitRatio)) } catch {}
   }, [splitRatio])
+
+  useEffect(() => {
+    const media = window.matchMedia?.(WIDE_READER_QUERY)
+    if (!media) return undefined
+    const update = () => setWideReader(media.matches)
+    update()
+    media.addEventListener?.('change', update)
+    return () => media.removeEventListener?.('change', update)
+  }, [])
 
   // Cleanup rAF on unmount
   useEffect(() => () => { if (rafRef.current) cancelAnimationFrame(rafRef.current) }, [])
@@ -168,9 +183,11 @@ export function StoryReader({ story, onClose, onRate }) {
     const body = readerBodyRef.current
     if (!body) return
     const rect = body.getBoundingClientRect()
-    const newRatio = (e.clientY - rect.top) / rect.height
+    const newRatio = wideReader
+      ? (e.clientX - rect.left) / rect.width
+      : (e.clientY - rect.top) / rect.height
     setSplitRatio(clampSplitRatio(newRatio))
-  }, [])
+  }, [wideReader])
 
   const handleDividerPointerUp = useCallback((e) => {
     e.currentTarget.releasePointerCapture(e.pointerId)
@@ -214,17 +231,13 @@ export function StoryReader({ story, onClose, onRate }) {
       }
       const para = story.paragraphs[paraIdx]
       const word = stripWordPunct(tok.text)
-      const entry = word ? lookupGlossary(para, word) : null
-      const sourceText = lang === 'a' ? para.a : para.b
+      const entry = word ? lookupGlossary(para, word, lang, tok.wordIdx) : null
       const otherText = lang === 'a' ? para.b : para.a
       let otherWord = entry ? (lang === 'a' ? entry.word_b : entry.word_a) : ''
       let otherSentence = ''
       let matchKind = entry ? 'glossary' : 'sentence'
       if (!entry) {
-        const cue = inferAlignedCue(sourceText, otherText, tok.wordIdx, tok.sentIdx)
-        otherWord = cue.word || ''
-        otherSentence = cue.sentence || ''
-        if (otherWord) matchKind = 'approx'
+        otherSentence = sentenceText(tokenizeParagraph(otherText), tok.sentIdx)
       }
       signal('word_highlighted', {
         level: story.level || '',
@@ -335,12 +348,12 @@ export function StoryReader({ story, onClose, onRate }) {
         </div>
       </div>
 
-      <div className="tn-reader-body" ref={readerBodyRef}>
+      <div className={`tn-reader-body${wideReader ? ' is-wide' : ''}`} ref={readerBodyRef}>
         {/* TOP PANE */}
         <div
           className="tn-pane tn-pane-top"
           ref={topPaneRef}
-          style={{ height: `${splitRatio * 100}%` }}
+          style={{ flexGrow: splitRatio }}
           onScroll={handleTopScroll}
           onClick={handlePaneClick}
           onPointerDown={claimTop}
@@ -379,11 +392,13 @@ export function StoryReader({ story, onClose, onRate }) {
           onKeyDown={handleDividerKeyDown}
           aria-label="Resize story panes"
           role="separator"
-          aria-orientation="horizontal"
+          aria-orientation={wideReader ? 'vertical' : 'horizontal'}
           aria-valuemin={MIN_SPLIT_RATIO * 100}
           aria-valuemax={MAX_SPLIT_RATIO * 100}
           aria-valuenow={Math.round(splitRatio * 100)}
-          aria-valuetext={`Top pane ${Math.round(splitRatio * 100)}%, bottom pane ${Math.round((1 - splitRatio) * 100)}%`}
+          aria-valuetext={wideReader
+            ? `Left pane ${Math.round(splitRatio * 100)}%, right pane ${Math.round((1 - splitRatio) * 100)}%`
+            : `Top pane ${Math.round(splitRatio * 100)}%, bottom pane ${Math.round((1 - splitRatio) * 100)}%`}
           tabIndex={0}
         >
           <div className="tn-divider-pip" aria-hidden="true" />
@@ -393,7 +408,7 @@ export function StoryReader({ story, onClose, onRate }) {
         <div
           className="tn-pane tn-pane-bottom"
           ref={botPaneRef}
-          style={{ height: `${(1 - splitRatio) * 100}%` }}
+          style={{ flexGrow: 1 - splitRatio }}
           onScroll={handleBotScroll}
           onClick={handlePaneClick}
           onPointerDown={claimBot}
@@ -435,7 +450,7 @@ export function StoryReader({ story, onClose, onRate }) {
           {highlight.note && <div className="tn-lookup-note">{highlight.note}</div>}
           {highlight.matchKind !== 'glossary' && (
             <div className="tn-lookup-note">
-              No exact glossary entry yet. The translated sentence is shown below.
+              No exact word match in this story. Here is the aligned sentence instead.
             </div>
           )}
           {highlight.otherSentence && (

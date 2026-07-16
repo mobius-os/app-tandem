@@ -8,7 +8,7 @@ import {
   alignSentenceIndex,
   stripWordPunct,
   findPhraseTokenRange,
-  inferAlignedCue,
+  findPhraseTokenRangeAt,
 } from '../text-align.mjs'
 
 // ---------------------------------------------------------------------------
@@ -162,13 +162,9 @@ test('findPhraseTokenRange accepts conservative inflected forms, not substrings'
   assert.equal(findPhraseTokenRange(tokens, 'sent'), null)
 })
 
-test('inferAlignedCue returns a closest translated cue and sentence', () => {
-  const cue = inferAlignedCue(
-    'The old fisherman spared the prince.',
-    'Stari ribar poštedio je princa.',
-    2,
-    0,
-  )
-  assert.equal(cue.word, 'poštedio')
-  assert.equal(cue.sentence, 'Stari ribar poštedio je princa.')
+test('findPhraseTokenRangeAt only matches the tapped occurrence', () => {
+  const tokens = tokenizeParagraph('A cat watched a hundred birds.')
+  assert.equal(findPhraseTokenRangeAt(tokens, 'a hundred', 0), null)
+  assert.deepEqual(findPhraseTokenRangeAt(tokens, 'a hundred', 3), { start: 3, end: 4 })
+  assert.deepEqual(findPhraseTokenRangeAt(tokens, 'a hundred', 4), { start: 3, end: 4 })
 })

@@ -54,6 +54,7 @@ test('reader resize and word lookup stay keyboard accessible without tab spam', 
   assert.match(reader, /aria-valuemin=\{MIN_SPLIT_RATIO \* 100\}/)
   assert.match(reader, /aria-valuenow=\{Math\.round\(splitRatio \* 100\)\}/)
   assert.match(reader, /onKeyDown=\{handleDividerKeyDown\}/)
+  assert.match(reader, /aria-orientation=\{wideReader \? 'vertical' : 'horizontal'\}/)
   assert.match(reader, /case 'ArrowUp':/)
   assert.match(reader, /case 'PageDown':/)
   assert.match(reader, /case 'Home':/)
