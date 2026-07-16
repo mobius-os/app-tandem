@@ -131,8 +131,8 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .tn-btn:active { transform: scale(0.97); }
 .tn-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .tn-btn:disabled { opacity: 0.5; cursor: default; transform: none; }
-.tn-btn-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
-@media (hover: hover) { .tn-btn-primary:hover { filter: brightness(1.06); } }
+.tn-btn-primary { background: var(--accent-hover, var(--accent)); border-color: var(--accent-hover, var(--accent)); color: var(--accent-fg); }
+@media (hover: hover) { .tn-btn-primary:hover { filter: brightness(0.94); } }
 .tn-btn-secondary { background: var(--surface2, var(--surface)); }
 @media (hover: hover) { .tn-btn-secondary:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); } }
 .tn-btn-ghost { background: transparent; border-color: transparent; color: var(--accent); }
@@ -226,12 +226,12 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 }
 .tn-generate-btn {
   min-height: 44px; padding: 10px 16px; border-radius: 10px;
-  background: var(--accent); border: 1px solid var(--accent); color: var(--accent-fg);
+  background: var(--accent-hover, var(--accent)); border: 1px solid var(--accent-hover, var(--accent)); color: var(--accent-fg);
   font-family: var(--font); font-size: 14px; font-weight: 600; cursor: pointer;
   white-space: nowrap; touch-action: manipulation; user-select: none;
   transition: filter 0.14s ease, transform 0.1s ease;
 }
-@media (hover: hover) { .tn-generate-btn:not(:disabled):hover { filter: brightness(1.08); } }
+@media (hover: hover) { .tn-generate-btn:not(:disabled):hover { filter: brightness(0.94); } }
 .tn-generate-btn:active { transform: scale(0.97); }
 .tn-generate-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .tn-generate-btn:disabled { background: var(--surface); border-color: var(--border); color: var(--muted); cursor: default; pointer-events: none; }
