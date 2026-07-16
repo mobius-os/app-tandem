@@ -69,6 +69,7 @@ export const CSS = `
   min-width: 0; line-height: 1.2;
 }
 .tn-brand-name {
+  margin: 0;
   font-size: 15px; font-weight: 700; color: var(--text);
   letter-spacing: 0;
 }

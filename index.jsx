@@ -144,7 +144,7 @@ export default function App({ appId, token }) {
           {/* Static name + tagline. NOT the old dynamic language indicator
               (removed in v0.7.0) — this never changes per story/language. */}
           <div className="tn-brand-text">
-            <span className="tn-brand-name">Tandem</span>
+            <h1 className="tn-brand-name">Tandem</h1>
             <span className="tn-brand-tagline">Read side by side in two languages</span>
           </div>
         </div>
