@@ -13,6 +13,7 @@ import {
   findPhraseTokenRangeAt,
   stripWordPunct,
   tokenizeParagraph,
+  tokensLooselyMatch,
 } from './text-align.mjs'
 
 export const CEFR_LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2']
@@ -57,6 +58,8 @@ export function lookupGlossary(para, word, lang, wordIdx) {
   if (!needle) return null
   const text = typeof para[lang] === 'string' ? para[lang] : ''
   const tokens = tokenizeParagraph(text)
+  const tappedToken = tokens.find((token) => token.isWord && token.wordIdx === wordIdx)
+  if (!tappedToken || !tokensLooselyMatch(tappedToken.text, needle)) return null
   const termKey = lang === 'a' ? 'word_a' : 'word_b'
   return para.glossary.find((entry) => {
     if (typeof entry?.[termKey] !== 'string') return false

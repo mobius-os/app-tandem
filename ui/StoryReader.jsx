@@ -1,5 +1,11 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { sentenceText, stripWordPunct, tokenizeParagraph } from '../text-align.mjs'
+import {
+  alignSentenceIndex,
+  sentenceCount,
+  sentenceText,
+  stripWordPunct,
+  tokenizeParagraph,
+} from '../text-align.mjs'
 import { lookupGlossary } from '../story-schema.mjs'
 import { computeParaOffsets, computeSyncScrollTop, computeProportionalScrollTop, clampScrollTargetToView } from '../scroll-sync.mjs'
 import { RATE_OPTIONS } from '../constants.js'
@@ -237,7 +243,9 @@ export function StoryReader({ story, onClose, onRate }) {
       let otherSentence = ''
       let matchKind = entry ? 'glossary' : 'sentence'
       if (!entry) {
-        otherSentence = sentenceText(tokenizeParagraph(otherText), tok.sentIdx)
+        const otherTokens = tokenizeParagraph(otherText)
+        const otherSentIdx = alignSentenceIndex(tok.sentIdx, sentenceCount(otherTokens))
+        otherSentence = sentenceText(otherTokens, otherSentIdx)
       }
       signal('word_highlighted', {
         level: story.level || '',

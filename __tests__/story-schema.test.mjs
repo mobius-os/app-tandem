@@ -99,29 +99,29 @@ const SAMPLE_PARA = {
 }
 
 test('lookupGlossary finds entry by word_a (case-insensitive)', () => {
-  const entry = lookupGlossary(SAMPLE_PARA, 'Cat')
+  const entry = lookupGlossary(SAMPLE_PARA, 'Cat', 'a', 1)
   assert.ok(entry)
   assert.equal(entry.word_b, 'chat')
 })
 
 test('lookupGlossary finds entry by word_b (case-insensitive)', () => {
-  const entry = lookupGlossary(SAMPLE_PARA, 'Tapis')
+  const entry = lookupGlossary(SAMPLE_PARA, 'Tapis', 'b', 6)
   assert.ok(entry)
   assert.equal(entry.word_a, 'mat')
 })
 
 test('lookupGlossary returns null for a word not in the glossary', () => {
-  assert.equal(lookupGlossary(SAMPLE_PARA, 'elephant'), null)
+  assert.equal(lookupGlossary(SAMPLE_PARA, 'elephant', 'a', 1), null)
 })
 
 test('lookupGlossary returns null for empty/null input', () => {
-  assert.equal(lookupGlossary(null, 'cat'), null)
-  assert.equal(lookupGlossary(SAMPLE_PARA, ''), null)
-  assert.equal(lookupGlossary(SAMPLE_PARA, null), null)
+  assert.equal(lookupGlossary(null, 'cat', 'a', 1), null)
+  assert.equal(lookupGlossary(SAMPLE_PARA, '', 'a', 1), null)
+  assert.equal(lookupGlossary(SAMPLE_PARA, null, 'a', 1), null)
 })
 
 test('lookupGlossary returns null when glossary is missing', () => {
-  assert.equal(lookupGlossary({ a: 'x', b: 'y' }, 'cat'), null)
+  assert.equal(lookupGlossary({ a: 'x', b: 'y' }, 'cat', 'a', 0), null)
 })
 
 // Whole-word matching: tapping a short word must NOT substring-hit a longer
@@ -137,24 +137,24 @@ const SUBSTRING_PARA = {
 
 test('lookupGlossary: tapping "a" does NOT return the "pospanom" entry (substring trap)', () => {
   // "pospanom" contains "a"; the old substring match returned this entry.
-  assert.equal(lookupGlossary(SUBSTRING_PARA, 'a'), null)
+  assert.equal(lookupGlossary(SUBSTRING_PARA, 'a', 'a', 1), null)
 })
 
 test('lookupGlossary: tapping "mill" does NOT match "miller" (not a whole word)', () => {
   // "miller"/"mlinar" both contain "mill" as a substring; whole-word must miss.
-  assert.equal(lookupGlossary(SUBSTRING_PARA, 'mill'), null)
+  assert.equal(lookupGlossary(SUBSTRING_PARA, 'mill', 'a', 2), null)
 })
 
 test('lookupGlossary: tapping "In" does NOT match "mlinar" (substring trap)', () => {
   // "mlinar" contains "in"; the old lowercase substring match returned it.
-  assert.equal(lookupGlossary(SUBSTRING_PARA, 'In'), null)
+  assert.equal(lookupGlossary(SUBSTRING_PARA, 'In', 'a', 0), null)
 })
 
 test('lookupGlossary: an exact whole-word tap returns its pair', () => {
-  const a = lookupGlossary(SUBSTRING_PARA, 'miller')
+  const a = lookupGlossary(SUBSTRING_PARA, 'miller', 'a', 10)
   assert.ok(a)
   assert.equal(a.word_b, 'mlinar')
-  const b = lookupGlossary(SUBSTRING_PARA, 'mlinar')
+  const b = lookupGlossary(SUBSTRING_PARA, 'mlinar', 'b', 7)
   assert.ok(b)
   assert.equal(b.word_a, 'miller')
 })
@@ -162,8 +162,8 @@ test('lookupGlossary: an exact whole-word tap returns its pair', () => {
 test('lookupGlossary: a tap with adjacent punctuation still matches its whole word', () => {
   // The render side strips punctuation; the lookup applies the same
   // normalization so "miller," / "miller." resolve to the same token.
-  assert.equal(lookupGlossary(SUBSTRING_PARA, 'miller,').word_b, 'mlinar')
-  assert.equal(lookupGlossary(SUBSTRING_PARA, 'miller.').word_b, 'mlinar')
+  assert.equal(lookupGlossary(SUBSTRING_PARA, 'miller,', 'a', 10).word_b, 'mlinar')
+  assert.equal(lookupGlossary(SUBSTRING_PARA, 'miller.', 'a', 10).word_b, 'mlinar')
 })
 
 test('lookupGlossary: a token inside a multi-word term matches by whole word', () => {
@@ -173,10 +173,10 @@ test('lookupGlossary: a token inside a multi-word term matches by whole word', (
     glossary: [{ word_a: 'sat down', word_b: 'se sentó' }],
   }
   // Tapping a single constituent token of a multi-word term resolves the pair.
-  assert.equal(lookupGlossary(para, 'sat').word_b, 'se sentó')
-  assert.equal(lookupGlossary(para, 'sentó').word_a, 'sat down')
+  assert.equal(lookupGlossary(para, 'sat', 'a', 1).word_b, 'se sentó')
+  assert.equal(lookupGlossary(para, 'sentó', 'b', 2).word_a, 'sat down')
   // But a substring of a token ("sent" within "sentó") must NOT match.
-  assert.equal(lookupGlossary(para, 'sent'), null)
+  assert.equal(lookupGlossary(para, 'sent', 'b', 2), null)
 })
 
 test('lookupGlossary accepts conservative longer-word inflections', () => {
@@ -185,8 +185,28 @@ test('lookupGlossary accepts conservative longer-word inflections', () => {
     b: 'Ribaru se činilo dugo.',
     glossary: [{ word_a: 'fisherman', word_b: 'ribar' }],
   }
-  assert.equal(lookupGlossary(para, 'ribaru').word_a, 'fisherman')
-  assert.equal(lookupGlossary(para, 'riba'), null)
+  assert.equal(lookupGlossary(para, 'ribaru', 'b', 0).word_a, 'fisherman')
+  assert.equal(lookupGlossary(para, 'riba', 'b', 0), null)
+})
+
+test('lookupGlossary only matches the occurrence inside its glossary phrase', () => {
+  const para = {
+    a: 'A cat watched a hundred birds.',
+    b: 'Un gato miró cien pájaros.',
+    glossary: [{ word_a: 'a hundred', word_b: 'cien' }],
+  }
+  assert.equal(lookupGlossary(para, 'A', 'a', 0), null)
+  assert.equal(lookupGlossary(para, 'a', 'a', 3)?.word_b, 'cien')
+})
+
+test('lookupGlossary checks only the tapped language side', () => {
+  const para = {
+    a: 'Pie is tasty.',
+    b: 'El pastel está rico.',
+    glossary: [{ word_a: 'pie', word_b: 'pastel' }],
+  }
+  assert.equal(lookupGlossary(para, 'pastel', 'a', 0), null)
+  assert.equal(lookupGlossary(para, 'pastel', 'b', 1)?.word_a, 'pie')
 })
 
 // ---------------------------------------------------------------------------
