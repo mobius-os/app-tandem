@@ -4,9 +4,8 @@ import { tokenizeParagraph, sentenceCount, alignSentenceIndex, findPhraseTokenRa
 // ---------------------------------------------------------------------------
 // ParaText — one paragraph rendered as tappable word spans with the inline
 // tap highlight. No bottom sheet: the tapped word gets the strong accent,
-// its sentence the soft accent, and the OTHER pane shows the aligned
-// sentence (index-clamped) plus — when the glossary maps the word — the
-// exact translated word, also strong.
+// and the OTHER pane shows the aligned sentence plus the exact translated
+// word when the glossary maps it.
 //
 // `highlight` is the reader-level state:
 //   { paraIdx, lang, wordIdx, sentIdx, otherWord }

@@ -435,7 +435,7 @@ export function StoryReader({ story, onClose, onRate }) {
           {highlight.note && <div className="tn-lookup-note">{highlight.note}</div>}
           {highlight.matchKind !== 'glossary' && (
             <div className="tn-lookup-note">
-              No exact glossary entry yet — the translated sentence is highlighted.
+              No exact glossary entry yet. The translated sentence is shown below.
             </div>
           )}
           {highlight.otherSentence && (

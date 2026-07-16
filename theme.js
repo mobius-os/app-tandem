@@ -373,12 +373,12 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .tn-pane-top { border-bottom: 1px solid var(--border); }
 .tn-pane-bottom {}
 
-/* Draggable divider: a SLIM 10px visual bar; the ::before overlay extends
+/* Draggable divider: a quiet 6px visual bar; the ::before overlay extends
    the pointer hit area to 44px without adding visual weight. z-index keeps
    the overlay above the adjacent panes so the extra hit area actually
    receives the pointer. (Same recipe as app-latex / app-webstudio.) */
 .tn-divider-handle {
-  flex: 0 0 10px; height: 10px;
+  flex: 0 0 6px; height: 6px;
   box-sizing: border-box;
   position: relative; z-index: 5;
   display: flex; align-items: center; justify-content: center;
@@ -389,15 +389,15 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 }
 .tn-divider-handle::before {
   content: ''; position: absolute;
-  left: 0; right: 0; top: -17px; bottom: -17px;
+  left: 0; right: 0; top: -19px; bottom: -19px;
 }
 .tn-divider-handle:hover,
 .tn-divider-handle:focus-visible {
   background: color-mix(in srgb, var(--accent) 12%, var(--surface));
 }
 .tn-divider-pip {
-  width: 44px; height: 4px; border-radius: 999px;
-  background: color-mix(in srgb, var(--muted) 65%, transparent);
+  width: 30px; height: 3px; border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 52%, transparent);
   pointer-events: none;
 }
 
@@ -446,16 +446,13 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
   background: color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
-/* Inline tap highlight: the tapped word (and its glossary translation in the
-   other pane) gets the strong accent; the surrounding sentence — in BOTH
-   panes, aligned sentence-by-index — gets the soft accent. The aligned
-   context is deliberately emphatic so the tapped/translated context reads at
-   a glance: a tinted band with a faint accent underline on the sentence, and
-   a high-contrast pill + ring on the hit word. All accent-token driven so it
-   tracks the active theme instead of fighting it. */
+/* Inline tap highlight: the tapped word and its glossary translation get the
+   strong accent. The surrounding aligned sentence stays visually quiet. Its
+   tokens still carry .tn-ctx so the reader can preserve alignment semantics
+   without turning a sentence into a row of separate pills. */
 .tn-ctx {
-  background: color-mix(in srgb, var(--accent) 20%, transparent);
-  box-shadow: 0 1px 0 color-mix(in srgb, var(--accent) 45%, transparent);
+  background: transparent;
+  box-shadow: none;
 }
 .tn-word.is-hit {
   background: color-mix(in srgb, var(--accent) 52%, transparent);
@@ -481,7 +478,7 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
   border-radius: 13px;
   background: color-mix(in srgb, var(--surface) 94%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--border));
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.26);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.26);
   -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
   display: flex; flex-direction: column; gap: 5px;
   max-height: min(34dvh, 240px);
