@@ -1,9 +1,15 @@
 {
   "id": "tandem",
   "name": "Tandem",
-  "version": "0.13.2",
+  "version": "0.13.3",
   "description": "Split-pane bilingual reader for language learning. Top and bottom panes show each language independently with sync-scroll; drag the slim divider to resize. Choose languages and level, then describe the story you want in one free-form prompt — ask for a fresh story or to continue an earlier one (the generation agent loads the relevant stories itself). Pick the generation agent (Claude or OpenAI Codex) in settings; tap any word to highlight it, its sentence, and its translation inline in both panes.",
   "offline_capable": true,
+  "offline": {
+    "reads": true,
+    "writes": "queued",
+    "execution": "none",
+    "reads_detail": "Previously opened stories, the story index, preferences, and pending-generation state use window.mobius.storage, so cached content remains readable and edits queue while offline. Creating a new story still requires a connection because generation runs on the server."
+  },
   "author": "mobius-os",
   "license": "MIT",
   "homepage": "https://github.com/mobius-os/app-tandem",
