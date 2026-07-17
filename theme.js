@@ -262,7 +262,7 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 }
 .tn-card:has(.tn-card-open:active) { transform: scale(0.992); }
 .tn-card-del {
-  flex: 0 0 auto; width: 44px; height: 44px; margin-right: -8px;
+  flex: 0 0 auto; width: 44px; height: 44px; margin-left: auto; margin-right: -16px;
   display: inline-flex; align-items: center; justify-content: center;
   border: none; border-radius: 8px; background: transparent;
   color: var(--muted); cursor: pointer;
@@ -447,12 +447,10 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
   background: color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
-/* Inline tap highlight: the tapped word and its glossary translation get the
-   strong accent. The surrounding aligned sentence stays visually quiet. Its
-   tokens still carry .tn-ctx so the reader can preserve alignment semantics
-   without turning a sentence into a row of separate pills. */
+/* Inline tap highlight: context is visibly linked across the two existing
+   texts; the tapped word and its verified glossary translation stay strongest. */
 .tn-ctx {
-  background: transparent;
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
   box-shadow: none;
 }
 .tn-word.is-hit {
@@ -461,25 +459,19 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 70%, transparent);
 }
 
-/* Lookup card — a temporary tap result. Exact glossary hits are strongest;
-   non-glossary taps explicitly say the sentence translation is being shown so
-   the interaction never reads as a silent miss. */
+/* Compact extra information only: the verified pair and an optional glossary
+   note. Sentence context stays in the two reader panes and is never repeated. */
 .tn-lookup-card {
   position: absolute; left: 12px; right: 12px;
   bottom: calc(12px + env(safe-area-inset-bottom, 0px));
   z-index: 9;
-  padding: 11px 13px;
-  border-radius: 13px;
-  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  padding: 10px 13px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 95%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--border));
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.26);
   -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
-  display: flex; flex-direction: column; gap: 5px;
-  max-height: min(34dvh, 240px);
-  overflow: auto;
-}
-.tn-lookup-card.is-sentence {
-  border-style: dashed;
+  display: flex; flex-direction: column; gap: 4px;
 }
 .tn-lookup-main {
   display: flex; align-items: baseline; gap: 8px; min-width: 0;
@@ -493,13 +485,7 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
   color: var(--text); font-weight: 760; min-width: 0;
   overflow: hidden; text-overflow: ellipsis;
 }
-.tn-lookup-note {
-  color: var(--muted); font-size: 12px; line-height: 1.35;
-}
-.tn-lookup-sentence {
-  color: var(--text); font-size: 12.5px; line-height: 1.45;
-  padding-top: 2px;
-}
+.tn-lookup-note { color: var(--muted); font-size: 12px; line-height: 1.4; }
 
 /* Wide web reader: languages sit left/right with a vertical drag divider.
    Phones and narrow windows keep the more readable stacked arrangement. */

@@ -23,9 +23,10 @@ test('system prompt targets 14–20 paragraph pairs', () => {
     'found a stale 10–16-range paragraph target')
 })
 
-test('system prompt demands glossary coverage of all non-trivial content words', () => {
-  assert.match(SYSTEM_PROMPT, /ALL non-trivial content words/i)
-  assert.ok(SYSTEM_PROMPT.includes('4–8 entries per paragraph'))
+test('system prompt demands dense glossary coverage of learner-useful words', () => {
+  assert.match(SYSTEM_PROMPT, /EVERY learner-useful content word/i)
+  assert.ok(SYSTEM_PROMPT.includes('10–16 entries per paragraph'))
+  assert.ok(SYSTEM_PROMPT.includes('140+ across the story'))
 })
 
 test('system prompt requires glossary words verbatim from the paragraph text', () => {

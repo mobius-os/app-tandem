@@ -66,6 +66,20 @@ test('reader resize and word lookup stay keyboard accessible without tab spam', 
   assert.doesNotMatch(para, /tabIndex=\{0\}/, 'every word must not be a separate tab stop')
 })
 
+test('word lookup highlights context in the panes and only adds non-duplicate details below', () => {
+  const reader = read('ui', 'StoryReader.jsx')
+  const css = read('theme.js')
+
+  assert.match(css, /\.tn-ctx\s*\{[\s\S]*?background:\s*color-mix/,
+    'the aligned sentence context must be visibly highlighted in both panes')
+  assert.match(reader, /highlight\?\.otherWord/,
+    'the bottom detail card should only mount for a verified glossary pair')
+  assert.match(reader, /highlight\.note/,
+    'an available glossary note should remain visible as extra information')
+  assert.doesNotMatch(reader, /otherSentence|tn-lookup-sentence/,
+    'the detail card must not repeat sentence context already visible in the panes')
+})
+
 test('transient UI states announce and settings avoid incomplete radio semantics', () => {
   const setup = read('ui', 'SetupView.jsx')
   assert.match(setup, /role="alert" aria-live="assertive"/)

@@ -1,11 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import {
-  alignSentenceIndex,
-  sentenceCount,
-  sentenceText,
-  stripWordPunct,
-  tokenizeParagraph,
-} from '../text-align.mjs'
+import { stripWordPunct } from '../text-align.mjs'
 import { lookupGlossary } from '../story-schema.mjs'
 import { computeParaOffsets, computeSyncScrollTop, computeProportionalScrollTop, clampScrollTargetToView } from '../scroll-sync.mjs'
 import { RATE_OPTIONS } from '../constants.js'
@@ -64,7 +58,7 @@ export function StoryReader({ story, onClose, onRate }) {
   const [splitRatio, setSplitRatio] = useState(readInitialSplitRatio)
   const [wideReader, setWideReader] = useState(readInitialWideReader)
   // Inline word-tap highlight:
-  // { paraIdx, lang, wordIdx, sentIdx, sourceWord, otherWord, otherSentence, note, matchKind }
+  // { paraIdx, lang, wordIdx, sentIdx, sourceTerm, otherWord, note }
   const [highlight, setHighlight] = useState(null)
 
   const topPaneRef = useRef(null)
@@ -238,15 +232,9 @@ export function StoryReader({ story, onClose, onRate }) {
       const para = story.paragraphs[paraIdx]
       const word = stripWordPunct(tok.text)
       const entry = word ? lookupGlossary(para, word, lang, tok.wordIdx) : null
-      const otherText = lang === 'a' ? para.b : para.a
-      let otherWord = entry ? (lang === 'a' ? entry.word_b : entry.word_a) : ''
-      let otherSentence = ''
-      let matchKind = entry ? 'glossary' : 'sentence'
-      if (!entry) {
-        const otherTokens = tokenizeParagraph(otherText)
-        const otherSentIdx = alignSentenceIndex(tok.sentIdx, sentenceCount(otherTokens))
-        otherSentence = sentenceText(otherTokens, otherSentIdx)
-      }
+      const sourceTerm = entry ? (lang === 'a' ? entry.word_a : entry.word_b) : ''
+      const otherWord = entry ? (lang === 'a' ? entry.word_b : entry.word_a) : ''
+      const matchKind = entry ? 'glossary' : 'sentence'
       signal('word_highlighted', {
         level: story.level || '',
         target_lang: story.lang_b || '',
@@ -258,11 +246,9 @@ export function StoryReader({ story, onClose, onRate }) {
         lang,
         wordIdx: tok.wordIdx,
         sentIdx: tok.sentIdx,
-        sourceWord: word,
+        sourceTerm,
         otherWord,
-        otherSentence,
         note: entry?.note || '',
-        matchKind,
       }
     })
   }, [story])
@@ -446,24 +432,14 @@ export function StoryReader({ story, onClose, onRate }) {
         </div>
       </div>
 
-      {highlight && (
-        <div className={`tn-lookup-card is-${highlight.matchKind || 'sentence'}`} role="status" aria-live="polite">
+      {highlight?.otherWord && (
+        <div className="tn-lookup-card" role="status" aria-live="polite">
           <div className="tn-lookup-main">
-            <span className="tn-lookup-source">{highlight.sourceWord}</span>
+            <span className="tn-lookup-source">{highlight.sourceTerm}</span>
             <span className="tn-lookup-arrow" aria-hidden="true">→</span>
-            <span className="tn-lookup-target">
-              {highlight.otherWord || 'translated sentence'}
-            </span>
+            <span className="tn-lookup-target">{highlight.otherWord}</span>
           </div>
           {highlight.note && <div className="tn-lookup-note">{highlight.note}</div>}
-          {highlight.matchKind !== 'glossary' && (
-            <div className="tn-lookup-note">
-              No exact word match in this story. Here is the aligned sentence instead.
-            </div>
-          )}
-          {highlight.otherSentence && (
-            <div className="tn-lookup-sentence">{highlight.otherSentence}</div>
-          )}
         </div>
       )}
 
