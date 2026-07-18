@@ -133,6 +133,60 @@ export function findPhraseTokenRange(tokens, phrase) {
   return null
 }
 
+// All non-overlapping occurrences of `phrase`, in order (same matching rules
+// as findPhraseTokenRange).
+function findAllPhraseTokenRanges(tokens, phrase) {
+  if (typeof phrase !== 'string' || !phrase.trim()) return []
+  const target = phrase
+    .trim()
+    .split(/\s+/)
+    .map((w) => stripWordPunct(w).toLowerCase())
+    .filter(Boolean)
+  if (target.length === 0) return []
+  const words = tokens.filter((t) => t.isWord)
+  const ranges = []
+  let i = 0
+  while (i + target.length <= words.length) {
+    let match = true
+    for (let j = 0; j < target.length; j++) {
+      if (!tokensLooselyMatch(words[i + j].text, target[j])) {
+        match = false
+        break
+      }
+    }
+    if (match) {
+      ranges.push({ start: words[i].wordIdx, end: words[i + target.length - 1].wordIdx })
+      i += target.length
+    } else {
+      i += 1
+    }
+  }
+  return ranges
+}
+
+// The phrase occurrence NEAREST the position-aligned sentence. A common
+// translation word can occur in several sentences; taking the first
+// occurrence (findPhraseTokenRange) can yank the context to an unrelated
+// earlier sentence, so the card and pane prefer the occurrence in — or
+// closest to — the sentence the tap aligns with. Ties go to the earlier one.
+export function locatePhraseRange(tokens, phrase, srcSentIdx) {
+  const ranges = findAllPhraseTokenRanges(tokens, phrase)
+  if (ranges.length === 0) return null
+  const aligned = alignSentenceIndex(srcSentIdx, sentenceCount(tokens))
+  if (aligned < 0) return ranges[0]
+  let best = ranges[0]
+  let bestDist = Infinity
+  for (const range of ranges) {
+    const startTok = tokens.find((t) => t.isWord && t.wordIdx === range.start)
+    const dist = startTok ? Math.abs(startTok.sentIdx - aligned) : Infinity
+    if (dist < bestDist) {
+      best = range
+      bestDist = dist
+    }
+  }
+  return best
+}
+
 // Find a phrase occurrence that contains a specific tapped word. A glossary
 // phrase can contain a common word ("a hundred", "to pay attention") while
 // that same word appears several other times in the paragraph. Looking up by
@@ -193,7 +247,7 @@ export function contextSentenceIndex(tokens, srcSentIdx, range) {
 // null when there is no sentence to show.
 export function buildAlignedContext(otherText, srcSentIdx, phrase) {
   const tokens = tokenizeParagraph(otherText)
-  const range = phrase ? findPhraseTokenRange(tokens, phrase) : null
+  const range = phrase ? locatePhraseRange(tokens, phrase, srcSentIdx) : null
   const sentIdx = contextSentenceIndex(tokens, srcSentIdx, range)
   if (sentIdx < 0) return null
   const runs = []

@@ -477,6 +477,7 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .tn-lookup-card {
   position: absolute; left: 12px; right: 12px;
   bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  max-width: 560px; margin: 0 auto; /* wide reader: cap + center, don't span */
   z-index: 9;
   padding: 10px 13px;
   border-radius: 12px;

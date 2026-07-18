@@ -11,6 +11,7 @@ import {
   findPhraseTokenRangeAt,
   contextSentenceIndex,
   buildAlignedContext,
+  locatePhraseRange,
 } from '../text-align.mjs'
 
 // ---------------------------------------------------------------------------
@@ -219,4 +220,19 @@ test('buildAlignedContext handles multi-word phrases as one strong run', () => {
 test('buildAlignedContext returns null for empty text', () => {
   assert.equal(buildAlignedContext('', 0, 'word'), null)
   assert.equal(buildAlignedContext(null, 0, ''), null)
+})
+
+test('locatePhraseRange prefers the occurrence nearest the aligned sentence', () => {
+  const tokens = tokenizeParagraph('The cat slept. Then the cat ran.')
+  // Tap came from source sentence 1 → aligned sentence 1 → the SECOND "cat".
+  assert.deepEqual(locatePhraseRange(tokens, 'cat', 1), { start: 5, end: 5 })
+  // From sentence 0 the first occurrence wins.
+  assert.deepEqual(locatePhraseRange(tokens, 'cat', 0), { start: 1, end: 1 })
+})
+
+test('buildAlignedContext follows the nearest occurrence, not the first', () => {
+  const runs = buildAlignedContext('The cat slept. Then the cat ran.', 1, 'cat')
+  assert.ok(runs)
+  assert.equal(runs.map((r) => r.text).join(''), 'Then the cat ran.')
+  assert.deepEqual(runs.filter((r) => r.strong).map((r) => r.text), ['cat'])
 })

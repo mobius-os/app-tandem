@@ -55,6 +55,17 @@ export function useModalFocus(containerRef, { onClose, allowClose = true, initia
     const first = focusable[0]
     const last = focusable[focusable.length - 1]
     const activeEl = document.activeElement
+    // Focus can legitimately sit OUTSIDE the focusable list — the landing
+    // control may be the dialog container itself (tabIndex -1, used so a
+    // sheet can open without popping the mobile keyboard). The browser's
+    // default order from there walks the page BEHIND the scrim on Shift+Tab,
+    // so route both directions into the list explicitly.
+    const inList = Array.prototype.indexOf.call(focusable, activeEl) !== -1
+    if (!inList) {
+      e.preventDefault()
+      ;(e.shiftKey ? last : first).focus()
+      return
+    }
     if (e.shiftKey && activeEl === first) {
       e.preventDefault()
       last.focus()

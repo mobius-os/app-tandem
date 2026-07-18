@@ -2,7 +2,7 @@
 
 Parallel bilingual stories for language learning. The Möbius agent generates a story in two languages shown in a split-pane reader; tap any word to highlight it, its sentence context, and its translation inline in both panes.
 
-> **Icon note:** The icon follows the catalog's glossy-3D infinity-motif pipeline (`icon-v6.png`), with the original beige version kept as `icon.png`.
+> **Icon note:** The icon is a satin-finish 3D infinity motif matching the catalog's house style (`icon-v7.png`); earlier revisions are kept as `icon.png`, `icon-v5.png`, and `icon-v6.png`.
 
 ## What it does
 
