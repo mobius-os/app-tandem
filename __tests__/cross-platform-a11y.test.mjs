@@ -66,18 +66,32 @@ test('reader resize and word lookup stay keyboard accessible without tab spam', 
   assert.doesNotMatch(para, /tabIndex=\{0\}/, 'every word must not be a separate tab stop')
 })
 
-test('word lookup highlights context in the panes and only adds non-duplicate details below', () => {
+test('word lookup pairs pane highlights with sentence context in the detail card', () => {
   const reader = read('ui', 'StoryReader.jsx')
+  const para = read('ui', 'ParaText.jsx')
   const css = read('theme.js')
 
   assert.match(css, /\.tn-ctx\s*\{[\s\S]*?background:\s*color-mix/,
     'the aligned sentence context must be visibly highlighted in both panes')
-  assert.match(reader, /highlight\?\.otherWord/,
-    'the bottom detail card should only mount for a verified glossary pair')
+  // Owner contract (2026-07-18): EVERY tap answers with the aligned
+  // other-language sentence in the card — a glossary-only card left half of
+  // all taps with no feedback at all, which read as the tap being broken.
+  assert.match(reader, /buildAlignedContext\(/,
+    'every tap must compute the aligned-sentence context for the card')
+  assert.match(reader, /tn-lookup-sentence/,
+    'the detail card must carry the aligned sentence, not only the word pair')
   assert.match(reader, /highlight\.note/,
     'an available glossary note should remain visible as extra information')
-  assert.doesNotMatch(reader, /otherSentence|tn-lookup-sentence/,
-    'the detail card must not repeat sentence context already visible in the panes')
+  assert.match(para, /contextSentenceIndex\(/,
+    'pane highlight and card context must choose the same sentence')
+})
+
+test('generate sheet opens without stealing focus into a text input', () => {
+  const generate = read('ui', 'GenerateSheet.jsx')
+  // Landing focus on an input pops the mobile keyboard over half the sheet
+  // before the reader has seen the form; focus lands on the sheet instead.
+  assert.match(generate, /initialFocusRef:\s*sheetRef/)
+  assert.match(generate, /tabIndex=\{-1\}/)
 })
 
 test('transient UI states announce and settings avoid incomplete radio semantics', () => {

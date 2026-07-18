@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { stripWordPunct } from '../text-align.mjs'
+import { stripWordPunct, buildAlignedContext } from '../text-align.mjs'
 import { lookupGlossary } from '../story-schema.mjs'
 import { computeParaOffsets, computeSyncScrollTop, computeProportionalScrollTop, clampScrollTargetToView } from '../scroll-sync.mjs'
 import { RATE_OPTIONS } from '../constants.js'
@@ -232,9 +232,15 @@ export function StoryReader({ story, onClose, onRate }) {
       const para = story.paragraphs[paraIdx]
       const word = stripWordPunct(tok.text)
       const entry = word ? lookupGlossary(para, word, lang, tok.wordIdx) : null
-      const sourceTerm = entry ? (lang === 'a' ? entry.word_a : entry.word_b) : ''
+      const sourceTerm = entry ? (lang === 'a' ? entry.word_a : entry.word_b) : word
       const otherWord = entry ? (lang === 'a' ? entry.word_b : entry.word_a) : ''
       const matchKind = entry ? 'glossary' : 'sentence'
+      // The card always carries the other-language sentence aligned to the tap
+      // — a glossary pair alone strands the reader without context, and a miss
+      // used to show nothing at all. The glossary phrase, when located, is
+      // marked strong inside the runs.
+      const otherText = lang === 'a' ? para.b : para.a
+      const context = buildAlignedContext(otherText, tok.sentIdx, otherWord)
       signal('word_highlighted', {
         level: story.level || '',
         target_lang: story.lang_b || '',
@@ -248,6 +254,7 @@ export function StoryReader({ story, onClose, onRate }) {
         sentIdx: tok.sentIdx,
         sourceTerm,
         otherWord,
+        context,
         note: entry?.note || '',
       }
     })
@@ -432,21 +439,41 @@ export function StoryReader({ story, onClose, onRate }) {
         </div>
       </div>
 
-      {highlight?.otherWord && (
+      {/* Lookup card — mounts on EVERY word tap, not only glossary hits. A
+          glossary pair shows word → word; either way the card carries the
+          aligned other-language sentence, because that context is the whole
+          point of tapping (a miss used to show nothing, which read as the
+          tap being broken). */}
+      {highlight && (highlight.otherWord || highlight.context) && (
         <div className="tn-lookup-card" role="status" aria-live="polite">
           <div className="tn-lookup-main">
             <span className="tn-lookup-source">{highlight.sourceTerm}</span>
-            <span className="tn-lookup-arrow" aria-hidden="true">→</span>
-            <span className="tn-lookup-target">{highlight.otherWord}</span>
+            {highlight.otherWord && (
+              <>
+                <span className="tn-lookup-arrow" aria-hidden="true">→</span>
+                <span className="tn-lookup-target">{highlight.otherWord}</span>
+              </>
+            )}
           </div>
           {highlight.note && <div className="tn-lookup-note">{highlight.note}</div>}
+          {highlight.context && (
+            <div className="tn-lookup-sentence">
+              {highlight.context.map((run, i) => (
+                run.strong
+                  ? <strong key={i} className="tn-lookup-strong">{run.text}</strong>
+                  : <span key={i}>{run.text}</span>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
       {/* Difficulty bar — floats over the reader, belonging to NEITHER pane.
           Shows only when an unrated story has been read to the end; after
-          rating it confirms briefly and retires (edit later from the card). */}
-      {!rating && atEnd && (
+          rating it confirms briefly and retires (edit later from the card).
+          Yields to an open lookup card (both are bottom-anchored); it returns
+          as soon as the highlight clears. */}
+      {!rating && atEnd && !highlight && (
         <div className="tn-rate-bar" role="group" aria-label="Rate story difficulty">
           <span className="tn-rate-label">How was it?</span>
           {RATE_OPTIONS.map(({ verdict, label }) => (

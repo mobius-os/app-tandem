@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { tokenizeParagraph, sentenceCount, alignSentenceIndex, findPhraseTokenRange } from '../text-align.mjs'
+import { tokenizeParagraph, contextSentenceIndex, findPhraseTokenRange } from '../text-align.mjs'
 
 // ---------------------------------------------------------------------------
 // ParaText — one paragraph rendered as tappable word spans with the inline
@@ -86,11 +86,12 @@ export function ParaText({ text, paraIdx, paneLang, highlight, onWordTap }) {
     ctxSentIdx = highlight.sentIdx
     strongStart = strongEnd = highlight.wordIdx
   } else if (inPara) {
-    ctxSentIdx = alignSentenceIndex(highlight.sentIdx, sentenceCount(tokens))
-    if (highlight.otherWord) {
-      const range = findPhraseTokenRange(tokens, highlight.otherWord)
-      if (range) { strongStart = range.start; strongEnd = range.end }
-    }
+    // Same sentence choice as the lookup card (contextSentenceIndex): when the
+    // glossary phrase is located, its own sentence is the context; otherwise
+    // the position-aligned one. Card and pane highlight must never disagree.
+    const range = highlight.otherWord ? findPhraseTokenRange(tokens, highlight.otherWord) : null
+    ctxSentIdx = contextSentenceIndex(tokens, highlight.sentIdx, range)
+    if (range) { strongStart = range.start; strongEnd = range.end }
   }
 
   return (

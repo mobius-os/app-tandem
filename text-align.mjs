@@ -1,9 +1,5 @@
 // Pure word/sentence alignment helpers for the inline word-tap highlight.
 // No React, no DOM globals.
-//
-// CANONICAL SOURCE — edit here, then mirror the changes to the
-// ===== INLINE-TEXT-ALIGN START / END ===== block inside index.jsx.
-// __tests__/text-align.test.mjs asserts the inlined copy stays in sync.
 
 // Sentence-final punctuation (Latin + CJK), optionally followed by closing
 // quotes/brackets. Abbreviations ("Mr.") produce false splits; acceptable
@@ -176,4 +172,50 @@ export function sentenceText(tokens, sentIdx) {
     .map((t) => t.text)
     .join('')
     .trim()
+}
+
+// Choose which sentence in the OTHER pane is the context for a tap. When the
+// glossary translation was actually located in that pane (`range`), its own
+// sentence is the honest context — the position-aligned index can disagree
+// with it because sentence counts differ between the two languages. Without a
+// located phrase, fall back to the position-aligned index (clamped).
+export function contextSentenceIndex(tokens, srcSentIdx, range) {
+  if (range) {
+    const startTok = tokens.find((t) => t.isWord && t.wordIdx === range.start)
+    if (startTok) return startTok.sentIdx
+  }
+  return alignSentenceIndex(srcSentIdx, sentenceCount(tokens))
+}
+
+// Build the lookup card's context line: the other-language sentence aligned to
+// the tapped word, split into runs with the located glossary phrase marked
+// strong. Returns plain {text, strong} runs (the card just maps over them), or
+// null when there is no sentence to show.
+export function buildAlignedContext(otherText, srcSentIdx, phrase) {
+  const tokens = tokenizeParagraph(otherText)
+  const range = phrase ? findPhraseTokenRange(tokens, phrase) : null
+  const sentIdx = contextSentenceIndex(tokens, srcSentIdx, range)
+  if (sentIdx < 0) return null
+  const runs = []
+  let lastWordIdx = -1
+  for (const tok of tokens) {
+    if (tok.isWord && tok.sentIdx !== sentIdx) lastWordIdx = tok.wordIdx
+    if (tok.sentIdx !== sentIdx) continue
+    let strong = false
+    if (range) {
+      // A whitespace gap is strong when it sits strictly INSIDE the phrase
+      // (between two in-range words), so "sat down" renders as one run.
+      strong = tok.isWord
+        ? tok.wordIdx >= range.start && tok.wordIdx <= range.end
+        : lastWordIdx >= range.start && lastWordIdx < range.end
+    }
+    if (tok.isWord) lastWordIdx = tok.wordIdx
+    const last = runs[runs.length - 1]
+    if (last && last.strong === strong) last.text += tok.text
+    else runs.push({ text: tok.text, strong })
+  }
+  if (runs.length === 0) return null
+  runs[0].text = runs[0].text.replace(/^\s+/, '')
+  runs[runs.length - 1].text = runs[runs.length - 1].text.replace(/\s+$/, '')
+  return runs.filter((run) => run.text !== '')
 }

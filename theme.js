@@ -186,6 +186,18 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
   overscroll-behavior: contain;
   scroll-padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
 }
+@keyframes tn-scrim-in {
+  from { background: rgba(0, 0, 0, 0); }
+  to { background: rgba(0, 0, 0, 0.5); }
+}
+@keyframes tn-sheet-in {
+  from { opacity: 0.4; transform: translateY(24px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .tn-scrim { animation: tn-scrim-in 0.18s ease-out; }
+  .tn-sheet { animation: tn-sheet-in 0.22s cubic-bezier(0.2, 0.8, 0.2, 1); }
+}
 .tn-sheet-title { margin: 0 0 4px; font-size: 16px; font-weight: 700; letter-spacing: 0; }
 .tn-sheet-sub { margin: 0 0 8px; font-size: 14px; color: var(--muted); line-height: 1.5; }
 .tn-sheet-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
@@ -459,8 +471,9 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 70%, transparent);
 }
 
-/* Compact extra information only: the verified pair and an optional glossary
-   note. Sentence context stays in the two reader panes and is never repeated. */
+/* Lookup card: the verified pair (when the glossary has one), an optional
+   note, and ALWAYS the aligned other-language sentence — the tap's payoff is
+   reading the word in its translated context without hunting the other pane. */
 .tn-lookup-card {
   position: absolute; left: 12px; right: 12px;
   bottom: calc(12px + env(safe-area-inset-bottom, 0px));
@@ -472,6 +485,13 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.26);
   -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
   display: flex; flex-direction: column; gap: 4px;
+}
+@keyframes tn-lookup-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .tn-lookup-card { animation: tn-lookup-in 0.16s ease-out; }
 }
 .tn-lookup-main {
   display: flex; align-items: baseline; gap: 8px; min-width: 0;
@@ -486,6 +506,13 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
   overflow: hidden; text-overflow: ellipsis;
 }
 .tn-lookup-note { color: var(--muted); font-size: 12px; line-height: 1.4; }
+/* The aligned sentence from the other pane; the located glossary phrase is
+   emphasized inside it, mirroring the in-pane .tn-word.is-hit accent. */
+.tn-lookup-sentence {
+  color: var(--text); font-size: 13px; line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.tn-lookup-strong { color: var(--accent); font-weight: 750; }
 
 /* Wide web reader: languages sit left/right with a vertical drag divider.
    Phones and narrow windows keep the more readable stacked arrangement. */
@@ -564,6 +591,14 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .tn-setup-intro { text-align: center; }
 .tn-full-width { width: 100%; }
 .tn-prompt-hint { margin: 6px 0 0; }
+/* Generate sheet: languages pair up side by side; the level select takes the
+   full row below them. Compact enough that the prompt stays the visual lead. */
+.tn-gen-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+.tn-gen-grid-wide { grid-column: 1 / -1; }
 .tn-model-fallback-note { margin-top: 8px; }
 .tn-settings-grid {
   display: grid;

@@ -9,6 +9,8 @@ import {
   stripWordPunct,
   findPhraseTokenRange,
   findPhraseTokenRangeAt,
+  contextSentenceIndex,
+  buildAlignedContext,
 } from '../text-align.mjs'
 
 // ---------------------------------------------------------------------------
@@ -167,4 +169,54 @@ test('findPhraseTokenRangeAt only matches the tapped occurrence', () => {
   assert.equal(findPhraseTokenRangeAt(tokens, 'a hundred', 0), null)
   assert.deepEqual(findPhraseTokenRangeAt(tokens, 'a hundred', 3), { start: 3, end: 4 })
   assert.deepEqual(findPhraseTokenRangeAt(tokens, 'a hundred', 4), { start: 3, end: 4 })
+})
+
+// ---------------------------------------------------------------------------
+// contextSentenceIndex + buildAlignedContext (the lookup card's context line)
+// ---------------------------------------------------------------------------
+test('contextSentenceIndex prefers the located phrase sentence over the aligned index', () => {
+  const tokens = tokenizeParagraph('One here. Two there. The cat sat down.')
+  const range = findPhraseTokenRange(tokens, 'cat')
+  assert.equal(contextSentenceIndex(tokens, 0, range), 2)
+})
+
+test('contextSentenceIndex falls back to the clamped aligned index without a range', () => {
+  const tokens = tokenizeParagraph('One here. Two there.')
+  assert.equal(contextSentenceIndex(tokens, 0, null), 0)
+  assert.equal(contextSentenceIndex(tokens, 5, null), 1)
+})
+
+test('buildAlignedContext returns the aligned sentence with the phrase marked strong', () => {
+  const runs = buildAlignedContext('It was hot. A thirsty crow flew over.', 1, 'thirsty')
+  assert.ok(runs)
+  assert.equal(runs.map((r) => r.text).join(''), 'A thirsty crow flew over.')
+  const strong = runs.filter((r) => r.strong)
+  assert.deepEqual(strong.map((r) => r.text), ['thirsty'])
+})
+
+test('buildAlignedContext without a phrase returns the aligned sentence, nothing strong', () => {
+  const runs = buildAlignedContext('It was hot. A thirsty crow flew over.', 0, '')
+  assert.ok(runs)
+  assert.equal(runs.map((r) => r.text).join(''), 'It was hot.')
+  assert.equal(runs.some((r) => r.strong), false)
+})
+
+test('buildAlignedContext follows the phrase into a non-aligned sentence', () => {
+  const runs = buildAlignedContext('First one. The crow was thirsty.', 0, 'thirsty')
+  assert.ok(runs)
+  assert.equal(runs.map((r) => r.text).join(''), 'The crow was thirsty.')
+  // Word tokens keep their trailing punctuation, matching the in-pane
+  // .is-hit span, so the strong run carries the period too.
+  assert.deepEqual(runs.filter((r) => r.strong).map((r) => r.text), ['thirsty.'])
+})
+
+test('buildAlignedContext handles multi-word phrases as one strong run', () => {
+  const runs = buildAlignedContext('She sat down over there.', 0, 'sat down')
+  assert.ok(runs)
+  assert.deepEqual(runs.filter((r) => r.strong).map((r) => r.text), ['sat down'])
+})
+
+test('buildAlignedContext returns null for empty text', () => {
+  assert.equal(buildAlignedContext('', 0, 'word'), null)
+  assert.equal(buildAlignedContext(null, 0, ''), null)
 })
