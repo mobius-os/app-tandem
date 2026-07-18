@@ -4,7 +4,7 @@ import { useModalFocus } from './useModalFocus.js'
 import { useShellBackTarget } from './useShellBackTarget.js'
 
 // ---------------------------------------------------------------------------
-// GenerateSheet — bottom sheet for the ONE free-form prompt + languages/level.
+// GenerateSheet — bottom sheet for languages/level + one free-form prompt.
 // The prompt replaces the old Topic + Series/storyline + genre split (v0.10):
 // the reader types a single natural-language ask and the generation agent
 // interprets it (fresh story, or continue/sequel an existing one — loading the
@@ -48,12 +48,60 @@ export function GenerateSheet({ onGenerate, onCancel, initialLangA, initialLangB
     <div className="tn-scrim" onClick={onCancel} role="dialog" aria-modal="true"
       aria-labelledby="tn-gen-title" onKeyDown={onKeyDown}>
       <div className="tn-sheet" ref={sheetRef} tabIndex={-1} onClick={(e) => e.stopPropagation()}>
-        <p className="tn-sheet-title" id="tn-gen-title">Generate a story</p>
-        {/* The free-form prompt leads — it is the one per-run decision; the
-            languages and level below arrive pre-filled from prefs and rarely
-            change, so they sit as a compact secondary grid. */}
-        <div>
-          <label className="tn-setup-label" htmlFor="tn-gen-prompt">What story would you like? (optional)</label>
+        <div className="tn-gen-head">
+          <p className="tn-sheet-title" id="tn-gen-title">Generate a story</p>
+          <p className="tn-sheet-sub">Check your reading setup.</p>
+        </div>
+        <fieldset className="tn-gen-prefs">
+          <legend className="tn-visually-hidden">Reading setup</legend>
+          <div className="tn-gen-grid">
+            <div>
+              <label className="tn-setup-label" htmlFor="tn-gen-lang-a">Language you know</label>
+              <input
+                id="tn-gen-lang-a"
+                name="language_known"
+                className="tn-input"
+                value={langA}
+                onChange={(e) => setLangA(e.target.value)}
+                placeholder="e.g. English"
+                autoComplete="off"
+              />
+            </div>
+            <div>
+              <label className="tn-setup-label" htmlFor="tn-gen-lang-b">Learning</label>
+              <input
+                id="tn-gen-lang-b"
+                name="language_learning"
+                className="tn-input"
+                value={langB}
+                onChange={(e) => setLangB(e.target.value)}
+                placeholder="e.g. Spanish"
+                autoComplete="off"
+              />
+            </div>
+            <div className="tn-gen-grid-wide">
+              <label className="tn-setup-label" htmlFor="tn-gen-level">Level</label>
+              <select
+                id="tn-gen-level"
+                name="level"
+                className="tn-select"
+                value={level}
+                onChange={(e) => setLevel(e.target.value)}
+              >
+                <option value="A1">A1 — Beginner</option>
+                <option value="A2">A2 — Elementary</option>
+                <option value="B1">B1 — Intermediate</option>
+                <option value="B2">B2 — Upper intermediate</option>
+                <option value="C1">C1 — Advanced</option>
+                <option value="C2">C2 — Mastery</option>
+              </select>
+            </div>
+          </div>
+        </fieldset>
+        <div className="tn-gen-prompt">
+          <label className="tn-setup-label" htmlFor="tn-gen-prompt">
+            Story idea <span className="tn-field-optional">Optional</span>
+          </label>
           <textarea
             id="tn-gen-prompt"
             name="story_prompt"
@@ -61,56 +109,12 @@ export function GenerateSheet({ onGenerate, onCancel, initialLangA, initialLangB
             value={promptInput}
             onChange={(e) => setPromptInput(e.target.value)}
             placeholder={promptPlaceholder}
-            rows={3}
+            rows={2}
             aria-describedby="tn-gen-prompt-hint"
           />
           <p id="tn-gen-prompt-hint" className="tn-setup-note tn-prompt-hint">
-            A fresh story, or continue an earlier one by its title or characters.
-            Leave blank to be surprised.
+            Leave blank for a surprise, or continue a story by name.
           </p>
-        </div>
-        <div className="tn-gen-grid">
-          <div>
-            <label className="tn-setup-label" htmlFor="tn-gen-lang-a">Language you know</label>
-            <input
-              id="tn-gen-lang-a"
-              name="language_known"
-              className="tn-input"
-              value={langA}
-              onChange={(e) => setLangA(e.target.value)}
-              placeholder="e.g. English"
-              autoComplete="off"
-            />
-          </div>
-          <div>
-            <label className="tn-setup-label" htmlFor="tn-gen-lang-b">Learning</label>
-            <input
-              id="tn-gen-lang-b"
-              name="language_learning"
-              className="tn-input"
-              value={langB}
-              onChange={(e) => setLangB(e.target.value)}
-              placeholder="e.g. Spanish"
-              autoComplete="off"
-            />
-          </div>
-          <div className="tn-gen-grid-wide">
-            <label className="tn-setup-label" htmlFor="tn-gen-level">Level (CEFR)</label>
-            <select
-              id="tn-gen-level"
-              name="level"
-              className="tn-select"
-              value={level}
-              onChange={(e) => setLevel(e.target.value)}
-            >
-              <option value="A1">A1 — Beginner</option>
-              <option value="A2">A2 — Elementary</option>
-              <option value="B1">B1 — Intermediate</option>
-              <option value="B2">B2 — Upper intermediate</option>
-              <option value="C1">C1 — Advanced</option>
-              <option value="C2">C2 — Mastery</option>
-            </select>
-          </div>
         </div>
         <div className="tn-sheet-actions">
           <button type="button" className="tn-btn tn-btn-secondary" onClick={onCancel}>Cancel</button>

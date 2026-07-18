@@ -96,6 +96,19 @@ test('generate sheet opens without stealing focus into a text input', () => {
   assert.match(generate, /tabIndex=\{-1\}/)
 })
 
+test('generate sheet presents reading preferences before the optional story idea', () => {
+  const generate = read('ui', 'GenerateSheet.jsx')
+  const knownLanguage = generate.indexOf('id="tn-gen-lang-a"')
+  const learningLanguage = generate.indexOf('id="tn-gen-lang-b"')
+  const level = generate.indexOf('id="tn-gen-level"')
+  const storyIdea = generate.indexOf('id="tn-gen-prompt"')
+
+  assert.ok(knownLanguage !== -1 && learningLanguage !== -1 && level !== -1 && storyIdea !== -1)
+  assert.ok(knownLanguage < storyIdea)
+  assert.ok(learningLanguage < storyIdea)
+  assert.ok(level < storyIdea)
+})
+
 test('transient UI states announce and settings avoid incomplete radio semantics', () => {
   const setup = read('ui', 'SetupView.jsx')
   assert.match(setup, /role="alert" aria-live="assertive"/)

@@ -288,7 +288,12 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .tn-card-del:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* Rated cards grow a quiet second row: the rating, tappable to change. */
 .tn-card.has-rate { flex-direction: column; align-items: stretch; gap: 10px; }
-.tn-card-row { display: flex; align-items: center; gap: 14px; min-width: 0; }
+/* width: 100% is load-bearing: .tn-card is itself a flex row, so without it
+   this row shrinks to its content and the trash lands at a DIFFERENT x on
+   every card (title width decides it) instead of flush right. The del
+   button's margin-left: auto only right-aligns once the row actually spans
+   the card. */
+.tn-card-row { display: flex; align-items: center; gap: 14px; min-width: 0; width: 100%; }
 .tn-card-rate-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .tn-card-rating {
   min-height: 44px; padding: 9px 12px; border-radius: 10px;
@@ -475,9 +480,9 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
    note, and ALWAYS the aligned other-language sentence — the tap's payoff is
    reading the word in its translated context without hunting the other pane. */
 .tn-lookup-card {
-  position: absolute; left: 12px; right: 12px;
-  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
-  max-width: 560px; margin: 0 auto; /* wide reader: cap + center, don't span */
+  position: absolute;
+  max-width: 560px; margin: 0 auto;
+  overflow-y: auto; overscroll-behavior: contain;
   z-index: 9;
   padding: 10px 13px;
   border-radius: 12px;
@@ -596,14 +601,32 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .tn-setup-intro { text-align: center; }
 .tn-full-width { width: 100%; }
 .tn-prompt-hint { margin: 6px 0 0; }
-/* Generate sheet: languages pair up side by side; the level select takes the
-   full row below them. Compact enough that the prompt stays the visual lead. */
+.tn-visually-hidden {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+.tn-gen-prefs { min-width: 0; margin: 0; padding: 0; border: 0; }
+.tn-gen-head .tn-sheet-title { margin-bottom: 3px; }
+.tn-gen-head .tn-sheet-sub { margin: 0; }
+.tn-gen-prompt {
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.tn-field-optional {
+  margin-left: 5px; color: var(--muted); font-size: 12px; font-weight: 500;
+}
+/* Generation preferences lead as one compact group; the optional story idea
+   follows as a visually separate customization. */
 .tn-gen-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 10px;
 }
 .tn-gen-grid-wide { grid-column: 1 / -1; }
+@media (min-width: 520px) {
+  .tn-gen-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(104px, 0.7fr); }
+  .tn-gen-grid-wide { grid-column: auto; }
+}
 .tn-model-fallback-note { margin-top: 8px; }
 .tn-settings-grid {
   display: grid;

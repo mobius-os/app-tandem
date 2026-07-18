@@ -4,38 +4,35 @@ import { lookupGlossary } from '../story-schema.mjs'
 import { computeParaOffsets, computeSyncScrollTop, computeProportionalScrollTop, clampScrollTargetToView } from '../scroll-sync.mjs'
 import { RATE_OPTIONS } from '../constants.js'
 import { signal } from '../signals.js'
+import {
+  MIN_SPLIT_RATIO,
+  MAX_SPLIT_RATIO,
+  STACKED_SPLIT_RATIO_KEY,
+  WIDE_SPLIT_RATIO_KEY,
+  PREVIOUS_SPLIT_RATIO_KEY,
+  LEGACY_SPLIT_RATIO_KEY,
+  clampSplitRatio,
+  resolveInitialSplitRatios,
+  isFirstPaneTapped,
+  getLookupCardPlacement,
+} from '../reader-layout.mjs'
 import { ParaText } from './ParaText.jsx'
 
-const DEFAULT_SPLIT_RATIO = 0.58
-const MIN_SPLIT_RATIO = 0.2
-const MAX_SPLIT_RATIO = 0.8
 const SPLIT_KEY_STEP = 0.03
 const SPLIT_KEY_LARGE_STEP = 0.1
-const SPLIT_RATIO_KEY = 'tn-split-ratio-v2'
-const LEGACY_SPLIT_RATIO_KEY = 'tn-split-ratio'
 const WIDE_READER_QUERY = '(min-width: 720px)'
 
-function clampSplitRatio(value) {
-  return Math.min(MAX_SPLIT_RATIO, Math.max(MIN_SPLIT_RATIO, value))
-}
-
-function readInitialSplitRatio() {
-  const read = (key) => {
-    try {
-      const v = parseFloat(localStorage.getItem(key))
-      return v >= MIN_SPLIT_RATIO && v <= MAX_SPLIT_RATIO ? v : null
-    } catch {
-      return null
-    }
+function readInitialSplitRatios() {
+  const stored = {}
+  for (const key of [
+    STACKED_SPLIT_RATIO_KEY,
+    WIDE_SPLIT_RATIO_KEY,
+    PREVIOUS_SPLIT_RATIO_KEY,
+    LEGACY_SPLIT_RATIO_KEY,
+  ]) {
+    try { stored[key] = localStorage.getItem(key) } catch {}
   }
-  const current = read(SPLIT_RATIO_KEY)
-  if (current !== null) return current
-  const legacy = read(LEGACY_SPLIT_RATIO_KEY)
-  // Old installs auto-saved the old 50/50 default, so treat near-half as
-  // "not chosen" and move the divider lower. Preserve clearly intentional
-  // manual drags.
-  if (legacy !== null && (legacy < 0.45 || legacy > 0.55)) return legacy
-  return DEFAULT_SPLIT_RATIO
+  return resolveInitialSplitRatios(stored)
 }
 
 function readInitialWideReader() {
@@ -55,7 +52,7 @@ export function StoryReader({ story, onClose, onRate }) {
   const [atEnd, setAtEnd] = useState(false)
   const [showNoted, setShowNoted] = useState(false)
   const atEndRef = useRef(false)
-  const [splitRatio, setSplitRatio] = useState(readInitialSplitRatio)
+  const [splitRatios, setSplitRatios] = useState(readInitialSplitRatios)
   const [wideReader, setWideReader] = useState(readInitialWideReader)
   // Inline word-tap highlight:
   // { paraIdx, lang, wordIdx, sentIdx, sourceTerm, otherWord, note }
@@ -86,10 +83,23 @@ export function StoryReader({ story, onClose, onRate }) {
     [story.paragraphs.length],
   )
 
-  // Persist split ratio
+  const splitRatio = wideReader ? splitRatios.wide : splitRatios.stacked
+  const setSplitRatio = useCallback((next) => {
+    const orientation = wideReader ? 'wide' : 'stacked'
+    setSplitRatios((current) => {
+      const value = typeof next === 'function' ? next(current[orientation]) : next
+      return { ...current, [orientation]: clampSplitRatio(value) }
+    })
+  }, [wideReader])
+
+  // Each orientation owns its ratio so crossing the responsive breakpoint
+  // never carries a deliberate phone split into the side-by-side reader.
   useEffect(() => {
-    try { localStorage.setItem(SPLIT_RATIO_KEY, String(splitRatio)) } catch {}
-  }, [splitRatio])
+    try {
+      localStorage.setItem(STACKED_SPLIT_RATIO_KEY, String(splitRatios.stacked))
+      localStorage.setItem(WIDE_SPLIT_RATIO_KEY, String(splitRatios.wide))
+    } catch {}
+  }, [splitRatios])
 
   useEffect(() => {
     const media = window.matchMedia?.(WIDE_READER_QUERY)
@@ -286,7 +296,7 @@ export function StoryReader({ story, onClose, onRate }) {
   // (no smooth tween) so the follower settles in one frame.
   useEffect(() => {
     if (!highlight) return
-    const tappedIsTop = (highlight.lang === 'a' && !bLead) || (highlight.lang === 'b' && bLead)
+    const tappedIsTop = isFirstPaneTapped(highlight.lang, bLead)
     const tappedPane = tappedIsTop ? topPaneRef.current : botPaneRef.current
     const otherPane = tappedIsTop ? botPaneRef.current : topPaneRef.current
     const tappedParaRefs = tappedIsTop ? topParaRefs : botParaRefs
@@ -328,6 +338,13 @@ export function StoryReader({ story, onClose, onRate }) {
 
   const langA = story.lang_a
   const langB = story.lang_b
+  const lookupCardStyle = highlight
+    ? getLookupCardPlacement({
+      isWide: wideReader,
+      tappedFirstPane: isFirstPaneTapped(highlight.lang, bLead),
+      splitRatio,
+    })
+    : undefined
 
   return (
     <div className="tn-reader">
@@ -440,40 +457,37 @@ export function StoryReader({ story, onClose, onRate }) {
             </div>
           ))}
         </div>
-      </div>
 
-      {/* Lookup card — mounts on EVERY word tap, not only glossary hits. A
-          glossary pair shows word → word; either way the card carries the
-          aligned other-language sentence, because that context is the whole
-          point of tapping (a miss used to show nothing, which read as the
-          tap being broken). */}
-      {highlight && (highlight.otherWord || highlight.context) && (
-        <div className="tn-lookup-card" role="status" aria-live="polite">
-          {/* A punctuation-only tap has no source term — the card then leads
-              with the sentence alone instead of an empty pair row. */}
-          {(highlight.sourceTerm || highlight.otherWord) && (
-            <div className="tn-lookup-main">
-              <span className="tn-lookup-source">{highlight.sourceTerm}</span>
-              {highlight.otherWord && (
-                <>
-                  <span className="tn-lookup-arrow" aria-hidden="true">→</span>
-                  <span className="tn-lookup-target">{highlight.otherWord}</span>
-                </>
-              )}
-            </div>
-          )}
-          {highlight.note && <div className="tn-lookup-note">{highlight.note}</div>}
-          {highlight.context && (
-            <div className="tn-lookup-sentence">
-              {highlight.context.map((run, i) => (
-                run.strong
-                  ? <strong key={i} className="tn-lookup-strong">{run.text}</strong>
-                  : <span key={i}>{run.text}</span>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+        {/* The lookup belongs to the translation pane, never the pane that was
+            tapped. Its insets follow the same ratio as the flex children. */}
+        {highlight && (highlight.otherWord || highlight.context) && (
+          <div className="tn-lookup-card" style={lookupCardStyle} role="status" aria-live="polite">
+            {/* A punctuation-only tap has no source term — the card then leads
+                with the sentence alone instead of an empty pair row. */}
+            {(highlight.sourceTerm || highlight.otherWord) && (
+              <div className="tn-lookup-main">
+                <span className="tn-lookup-source">{highlight.sourceTerm}</span>
+                {highlight.otherWord && (
+                  <>
+                    <span className="tn-lookup-arrow" aria-hidden="true">→</span>
+                    <span className="tn-lookup-target">{highlight.otherWord}</span>
+                  </>
+                )}
+              </div>
+            )}
+            {highlight.note && <div className="tn-lookup-note">{highlight.note}</div>}
+            {highlight.context && (
+              <div className="tn-lookup-sentence">
+                {highlight.context.map((run, i) => (
+                  run.strong
+                    ? <strong key={i} className="tn-lookup-strong">{run.text}</strong>
+                    : <span key={i}>{run.text}</span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Difficulty bar — floats over the reader, belonging to NEITHER pane.
           Shows only when an unrated story has been read to the end; after

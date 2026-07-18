@@ -1,7 +1,7 @@
 {
   "id": "tandem",
   "name": "Tandem",
-  "version": "0.14.0",
+  "version": "0.14.1",
   "description": "Split-pane bilingual reader for language learning. Wide screens show the languages left/right; phones and narrow windows stack them top/bottom. The panes sync-scroll and the divider resizes them. Choose languages and level, then describe the story you want in one free-form prompt — ask for a fresh story or to continue an earlier one. Pick the generation agent (Claude or OpenAI Codex) in settings; tap a word for its exact glossary match or honest aligned-sentence context.",
   "offline_capable": true,
   "offline": {
