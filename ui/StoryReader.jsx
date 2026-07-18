@@ -224,6 +224,9 @@ export function StoryReader({ story, onClose, onRate }) {
   }, [])
 
   const handleWordTap = useCallback((paraIdx, lang, tok) => {
+    // The transient "Noted" bar and the lookup card share the bottom edge;
+    // a tap retires the note for good rather than letting them stack.
+    setShowNoted(false)
     setHighlight((prev) => {
       // Tapping the same word again clears the highlight.
       if (prev && prev.paraIdx === paraIdx && prev.lang === lang && prev.wordIdx === tok.wordIdx) {
@@ -446,15 +449,19 @@ export function StoryReader({ story, onClose, onRate }) {
           tap being broken). */}
       {highlight && (highlight.otherWord || highlight.context) && (
         <div className="tn-lookup-card" role="status" aria-live="polite">
-          <div className="tn-lookup-main">
-            <span className="tn-lookup-source">{highlight.sourceTerm}</span>
-            {highlight.otherWord && (
-              <>
-                <span className="tn-lookup-arrow" aria-hidden="true">→</span>
-                <span className="tn-lookup-target">{highlight.otherWord}</span>
-              </>
-            )}
-          </div>
+          {/* A punctuation-only tap has no source term — the card then leads
+              with the sentence alone instead of an empty pair row. */}
+          {(highlight.sourceTerm || highlight.otherWord) && (
+            <div className="tn-lookup-main">
+              <span className="tn-lookup-source">{highlight.sourceTerm}</span>
+              {highlight.otherWord && (
+                <>
+                  <span className="tn-lookup-arrow" aria-hidden="true">→</span>
+                  <span className="tn-lookup-target">{highlight.otherWord}</span>
+                </>
+              )}
+            </div>
+          )}
           {highlight.note && <div className="tn-lookup-note">{highlight.note}</div>}
           {highlight.context && (
             <div className="tn-lookup-sentence">

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { tokenizeParagraph, contextSentenceIndex, locatePhraseRange } from '../text-align.mjs'
+import { tokenizeParagraph, contextSentenceSpan, locatePhraseRange } from '../text-align.mjs'
 
 // ---------------------------------------------------------------------------
 // ParaText — one paragraph rendered as tappable word spans with the inline
@@ -79,26 +79,27 @@ export function ParaText({ text, paraIdx, paneLang, highlight, onWordTap }) {
     }
   }
 
-  let ctxSentIdx = -1
+  let ctxSpan = null
   let strongStart = -1
   let strongEnd = -1
   if (isTappedPane) {
-    ctxSentIdx = highlight.sentIdx
+    ctxSpan = { lo: highlight.sentIdx, hi: highlight.sentIdx }
     strongStart = strongEnd = highlight.wordIdx
   } else if (inPara) {
-    // Same sentence choice as the lookup card (contextSentenceIndex over the
+    // Same sentence choice as the lookup card (contextSentenceSpan over the
     // occurrence locatePhraseRange picks nearest the aligned sentence): when
-    // the glossary phrase is located, its own sentence is the context;
-    // otherwise the position-aligned one. Card and pane must never disagree.
+    // the glossary phrase is located, its sentence window is the context;
+    // otherwise the position-aligned sentence. Card and pane must never
+    // disagree.
     const range = highlight.otherWord ? locatePhraseRange(tokens, highlight.otherWord, highlight.sentIdx) : null
-    ctxSentIdx = contextSentenceIndex(tokens, highlight.sentIdx, range)
+    ctxSpan = contextSentenceSpan(tokens, highlight.sentIdx, range)
     if (range) { strongStart = range.start; strongEnd = range.end }
   }
 
   return (
     <p className="tn-para-text">
       {tokens.map((tok, i) => {
-        const inCtx = ctxSentIdx >= 0 && tok.sentIdx === ctxSentIdx
+        const inCtx = ctxSpan !== null && tok.sentIdx >= ctxSpan.lo && tok.sentIdx <= ctxSpan.hi
         if (!tok.isWord) {
           return inCtx ? <span key={i} className="tn-ctx">{tok.text}</span> : tok.text
         }

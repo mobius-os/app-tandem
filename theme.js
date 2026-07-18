@@ -508,10 +508,14 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 }
 .tn-lookup-note { color: var(--muted); font-size: 12px; line-height: 1.4; }
 /* The aligned sentence from the other pane; the located glossary phrase is
-   emphasized inside it, mirroring the in-pane .tn-word.is-hit accent. */
+   emphasized inside it, mirroring the in-pane .tn-word.is-hit accent. Height
+   is capped (~5 lines, scrollable): unspaced CJK tokenizes as one giant
+   "sentence" and very long sentences exist — the card must never bury the
+   reader under a paragraph. */
 .tn-lookup-sentence {
   color: var(--text); font-size: 13px; line-height: 1.55;
   overflow-wrap: anywhere;
+  max-height: 7.75em; overflow-y: auto; overscroll-behavior: contain;
 }
 .tn-lookup-strong { color: var(--accent); font-weight: 750; }
 

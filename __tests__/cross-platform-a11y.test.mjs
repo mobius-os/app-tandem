@@ -73,17 +73,19 @@ test('word lookup pairs pane highlights with sentence context in the detail card
 
   assert.match(css, /\.tn-ctx\s*\{[\s\S]*?background:\s*color-mix/,
     'the aligned sentence context must be visibly highlighted in both panes')
-  // Owner contract (2026-07-18): EVERY tap answers with the aligned
-  // other-language sentence in the card — a glossary-only card left half of
-  // all taps with no feedback at all, which read as the tap being broken.
+  // EVERY tap answers with the aligned other-language sentence in the card —
+  // a glossary-only card leaves non-glossary taps with no feedback at all,
+  // which reads as the tap being broken.
   assert.match(reader, /buildAlignedContext\(/,
     'every tap must compute the aligned-sentence context for the card')
+  assert.match(reader, /highlight && \(highlight\.otherWord \|\| highlight\.context\)/,
+    'the card must mount for any tap with context, glossary hit or not')
   assert.match(reader, /tn-lookup-sentence/,
     'the detail card must carry the aligned sentence, not only the word pair')
   assert.match(reader, /highlight\.note/,
     'an available glossary note should remain visible as extra information')
-  assert.match(para, /contextSentenceIndex\(/,
-    'pane highlight and card context must choose the same sentence')
+  assert.match(para, /contextSentenceSpan\(/,
+    'pane highlight and card context must choose the same sentence window')
 })
 
 test('generate sheet opens without stealing focus into a text input', () => {

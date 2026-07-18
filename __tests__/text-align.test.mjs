@@ -9,7 +9,7 @@ import {
   stripWordPunct,
   findPhraseTokenRange,
   findPhraseTokenRangeAt,
-  contextSentenceIndex,
+  contextSentenceSpan,
   buildAlignedContext,
   locatePhraseRange,
 } from '../text-align.mjs'
@@ -175,16 +175,22 @@ test('findPhraseTokenRangeAt only matches the tapped occurrence', () => {
 // ---------------------------------------------------------------------------
 // contextSentenceIndex + buildAlignedContext (the lookup card's context line)
 // ---------------------------------------------------------------------------
-test('contextSentenceIndex prefers the located phrase sentence over the aligned index', () => {
+test('contextSentenceSpan prefers the located phrase sentence over the aligned index', () => {
   const tokens = tokenizeParagraph('One here. Two there. The cat sat down.')
   const range = findPhraseTokenRange(tokens, 'cat')
-  assert.equal(contextSentenceIndex(tokens, 0, range), 2)
+  assert.deepEqual(contextSentenceSpan(tokens, 0, range), { lo: 2, hi: 2 })
 })
 
-test('contextSentenceIndex falls back to the clamped aligned index without a range', () => {
+test('contextSentenceSpan falls back to the clamped aligned index without a range', () => {
   const tokens = tokenizeParagraph('One here. Two there.')
-  assert.equal(contextSentenceIndex(tokens, 0, null), 0)
-  assert.equal(contextSentenceIndex(tokens, 5, null), 1)
+  assert.deepEqual(contextSentenceSpan(tokens, 0, null), { lo: 0, hi: 0 })
+  assert.deepEqual(contextSentenceSpan(tokens, 5, null), { lo: 1, hi: 1 })
+})
+
+test('contextSentenceSpan covers every sentence a phrase straddles (abbreviation false split)', () => {
+  const tokens = tokenizeParagraph('He greeted Sr. Garcia warmly today.')
+  const range = findPhraseTokenRange(tokens, 'Sr. Garcia')
+  assert.deepEqual(contextSentenceSpan(tokens, 0, range), { lo: 0, hi: 1 })
 })
 
 test('buildAlignedContext returns the aligned sentence with the phrase marked strong', () => {
@@ -235,4 +241,11 @@ test('buildAlignedContext follows the nearest occurrence, not the first', () => 
   assert.ok(runs)
   assert.equal(runs.map((r) => r.text).join(''), 'Then the cat ran.')
   assert.deepEqual(runs.filter((r) => r.strong).map((r) => r.text), ['cat'])
+})
+
+test('buildAlignedContext keeps a phrase whole across an abbreviation false split', () => {
+  const runs = buildAlignedContext('He greeted Sr. Garcia warmly today.', 0, 'Sr. Garcia')
+  assert.ok(runs)
+  assert.equal(runs.map((r) => r.text).join(''), 'He greeted Sr. Garcia warmly today.')
+  assert.deepEqual(runs.filter((r) => r.strong).map((r) => r.text), ['Sr. Garcia'])
 })

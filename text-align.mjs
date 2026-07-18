@@ -228,17 +228,25 @@ export function sentenceText(tokens, sentIdx) {
     .trim()
 }
 
-// Choose which sentence in the OTHER pane is the context for a tap. When the
-// glossary translation was actually located in that pane (`range`), its own
-// sentence is the honest context — the position-aligned index can disagree
-// with it because sentence counts differ between the two languages. Without a
-// located phrase, fall back to the position-aligned index (clamped).
-export function contextSentenceIndex(tokens, srcSentIdx, range) {
+// The sentence WINDOW in the OTHER pane that is the context for a tap. When
+// the glossary translation was located (`range`), its own sentence(s) are the
+// honest context — and the window must cover EVERY sentence the phrase
+// touches, because an abbreviation ("Sr.") end-matches the sentence regex and
+// falsely splits mid-phrase; a single-sentence gate would truncate the phrase
+// in the card while the pane still highlights all of it. Without a located
+// phrase, the window is the position-aligned sentence (clamped). Returns
+// {lo, hi} inclusive, or null when there is nothing to show.
+export function contextSentenceSpan(tokens, srcSentIdx, range) {
   if (range) {
     const startTok = tokens.find((t) => t.isWord && t.wordIdx === range.start)
-    if (startTok) return startTok.sentIdx
+    const endTok = tokens.find((t) => t.isWord && t.wordIdx === range.end)
+    if (startTok) {
+      const lo = startTok.sentIdx
+      return { lo, hi: Math.max(lo, endTok ? endTok.sentIdx : lo) }
+    }
   }
-  return alignSentenceIndex(srcSentIdx, sentenceCount(tokens))
+  const idx = alignSentenceIndex(srcSentIdx, sentenceCount(tokens))
+  return idx < 0 ? null : { lo: idx, hi: idx }
 }
 
 // Build the lookup card's context line: the other-language sentence aligned to
@@ -248,13 +256,14 @@ export function contextSentenceIndex(tokens, srcSentIdx, range) {
 export function buildAlignedContext(otherText, srcSentIdx, phrase) {
   const tokens = tokenizeParagraph(otherText)
   const range = phrase ? locatePhraseRange(tokens, phrase, srcSentIdx) : null
-  const sentIdx = contextSentenceIndex(tokens, srcSentIdx, range)
-  if (sentIdx < 0) return null
+  const span = contextSentenceSpan(tokens, srcSentIdx, range)
+  if (span === null) return null
+  const inSpan = (tok) => tok.sentIdx >= span.lo && tok.sentIdx <= span.hi
   const runs = []
   let lastWordIdx = -1
   for (const tok of tokens) {
-    if (tok.isWord && tok.sentIdx !== sentIdx) lastWordIdx = tok.wordIdx
-    if (tok.sentIdx !== sentIdx) continue
+    if (tok.isWord && !inSpan(tok)) lastWordIdx = tok.wordIdx
+    if (!inSpan(tok)) continue
     let strong = false
     if (range) {
       // A whitespace gap is strong when it sits strictly INSIDE the phrase
