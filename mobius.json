@@ -20,6 +20,7 @@
     "text-align.mjs",
     "gen-model.mjs",
     "scroll-sync.mjs",
+    "reader-layout.mjs",
     "constants.js",
     "signals.js",
     "theme.js",
