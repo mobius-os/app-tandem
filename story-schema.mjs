@@ -1,14 +1,5 @@
-// Pure story-schema helpers shared by index.jsx (inlined) and the unit tests.
+// Pure story-schema helpers imported by the UI and the unit tests.
 // No React, no I/O.
-//
-// CANONICAL SOURCE — edit here, then mirror the changes to the
-// ===== INLINE-SCHEMA START / END ===== block inside index.jsx.
-// __tests__/story-schema.test.mjs asserts the inlined copy stays in sync.
-//
-// lookupGlossary reuses the same punctuation-strip normalization the
-// highlight side uses (stripWordPunct from text-align.mjs). index.jsx
-// already inlines stripWordPunct in its INLINE-TEXT-ALIGN block, so the
-// inline copy of lookupGlossary calls it directly without this import.
 import {
   findPhraseTokenRangeAt,
   stripWordPunct,
@@ -22,6 +13,16 @@ export const CEFR_LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2']
 // record (story.rating) and in prefs.feedback_history; generate.sh feeds the
 // recent ones back into the next generation prompt.
 export const STORY_RATINGS = ['too_simple', 'just_right', 'too_complex']
+
+// Keep one current difficulty verdict per story. A reader may re-rate an older
+// story after rating newer ones; removing every prior record for that story
+// prevents one story from being counted twice in the last-three adaptation.
+export function recordFeedback(history, storyId, verdict, ts) {
+  const current = Array.isArray(history) ? history : []
+  const next = current.filter((entry) => !(entry && entry.story_id === storyId))
+  next.push({ story_id: storyId, verdict, ts })
+  return next
+}
 
 // Return the next CEFR level up or down from the given level.
 // Used to adapt difficulty based on feedback history.

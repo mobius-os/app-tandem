@@ -154,7 +154,7 @@ export function SettingsSheet({ appId, token, prefs, onPrefsChange, onSelectMode
                 autoComplete="off"
               />
             </label>
-            <label className="tn-settings-field" htmlFor="tn-settings-level">
+            <label className="tn-settings-field tn-settings-field-wide" htmlFor="tn-settings-level">
               <span>Level</span>
               <select
                 id="tn-settings-level"

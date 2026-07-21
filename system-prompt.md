@@ -25,7 +25,7 @@ When the "Reader request" asks to continue, extend, or write a sequel to a story
 
 1. Use the FULL text under "Stories to continue" for continuity — the actual characters, names, plot, and tone. The Library index summary alone is NOT enough to continue coherently. If no story is inlined (the selection step found nothing clearly relevant), treat the request as a fresh story instead.
 2. If the request clearly continues a story but for some reason none is inlined, work from the index summary as a fallback and still write a NEW incident.
-3. Write the NEXT installment: same characters, world, and voice, honoring any tonal steer in the request ("but darker", "lighter this time"). Make it a NEW incident — a fresh complication or location — never a retelling of what you were given. Keep the SAME lang_a/lang_b/level as the story you are continuing unless the request explicitly changes them.
+3. Write the NEXT installment: same characters, world, and voice, honoring any tonal steer in the request ("but darker", "lighter this time"). Make it a NEW incident — a fresh complication or location — never a retelling of what you were given. Use the lang_a/lang_b and CEFR level in Generation parameters: those are the reader's current choices, even when they differ from the earlier story.
 
 ## CEFR level guidance
 
@@ -74,6 +74,6 @@ Rules:
 - `lang_b` is the TARGET language (the one they are learning).
 - `summary`: one sentence in lang_a, ≤25 words, naming the premise/setting (not the moral). It feeds the next generation's anti-repeat list, so make it concrete and distinct.
 - Glossary: cover every learner-useful content word plus useful function-word constructions (10–16 entries per paragraph; 140+ across the story). `word_a` and `word_b` must each appear verbatim in the paragraph text they belong to. Prefer several precise pairs over one broad phrase when that gives individual words useful tap targets.
-- For `classic` mode, put the source tale name in `title_b` as a parenthetical (see above).
+- For a retold public-domain tale, put the source tale name in `title_b` as a parenthetical (see above).
 - Do NOT invent URLs or external references.
 - Only output the JSON object — no surrounding text.

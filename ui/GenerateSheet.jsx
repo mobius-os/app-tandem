@@ -26,6 +26,8 @@ export function GenerateSheet({ onGenerate, onCancel, initialLangA, initialLangB
   const [langA, setLangA] = useState(initialLangA || 'English')
   const [langB, setLangB] = useState(initialLangB || '')
   const [level, setLevel] = useState(CEFR_LEVELS.includes(initialLevel) ? initialLevel : 'B1')
+  const [submitting, setSubmitting] = useState(false)
+  const [submitError, setSubmitError] = useState('')
 
   // Examples are TEXT, not buttons. One full phrasing in the placeholder —
   // context-aware "continue <recent title>" when there is one — and a single
@@ -35,13 +37,25 @@ export function GenerateSheet({ onGenerate, onCancel, initialLangA, initialLangB
     ? `e.g. “continue ‘${recentTitle}’, but darker”`
     : 'e.g. “a travel adventure in Japan”'
 
-  const handleGenerate = () => {
-    onGenerate({
-      prompt: promptInput.trim(),
-      lang_a: langA.trim() || (initialLangA || 'English'),
-      lang_b: langB.trim() || (initialLangB || ''),
-      level,
-    })
+  const handleGenerate = async () => {
+    if (submitting) return
+    setSubmitting(true)
+    setSubmitError('')
+    try {
+      const result = await onGenerate({
+        prompt: promptInput.trim(),
+        lang_a: langA.trim() || (initialLangA || 'English'),
+        lang_b: langB.trim() || (initialLangB || ''),
+        level,
+      })
+      if (result && result.ok === false) {
+        setSubmitError(result.message || 'Could not start generation. Try again.')
+        setSubmitting(false)
+      }
+    } catch {
+      setSubmitError('Could not start generation. Try again.')
+      setSubmitting(false)
+    }
   }
 
   return (
@@ -87,6 +101,7 @@ export function GenerateSheet({ onGenerate, onCancel, initialLangA, initialLangB
                 className="tn-select"
                 value={level}
                 onChange={(e) => setLevel(e.target.value)}
+                aria-describedby="tn-gen-level-hint"
               >
                 <option value="A1">A1 — Beginner</option>
                 <option value="A2">A2 — Elementary</option>
@@ -95,6 +110,9 @@ export function GenerateSheet({ onGenerate, onCancel, initialLangA, initialLangB
                 <option value="C1">C1 — Advanced</option>
                 <option value="C2">C2 — Mastery</option>
               </select>
+              <p id="tn-gen-level-hint" className="tn-setup-note tn-level-hint">
+                Recent difficulty ratings may adjust the story by one level.
+              </p>
             </div>
           </div>
         </fieldset>
@@ -116,9 +134,15 @@ export function GenerateSheet({ onGenerate, onCancel, initialLangA, initialLangB
             Leave blank for a surprise, or continue a story by name.
           </p>
         </div>
+        {submitError && (
+          <div className="tn-error-toast" role="alert" aria-live="assertive">{submitError}</div>
+        )}
         <div className="tn-sheet-actions">
-          <button type="button" className="tn-btn tn-btn-secondary" onClick={onCancel}>Cancel</button>
-          <button type="button" className="tn-btn tn-btn-primary" onClick={handleGenerate}>Generate</button>
+          <button type="button" className="tn-btn tn-btn-secondary" onClick={onCancel} disabled={submitting}>Cancel</button>
+          <button type="button" className="tn-btn tn-btn-primary" onClick={handleGenerate}
+            disabled={submitting} aria-busy={submitting}>
+            {submitting ? 'Starting…' : 'Generate'}
+          </button>
         </div>
       </div>
     </div>

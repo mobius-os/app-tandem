@@ -447,7 +447,10 @@ run_agent() {
 RELEVANT_IDS=""           # newline-separated validated ids (may be empty)
 LOADED_STORIES=""         # inlined full text of the validated stories for pass 2
 
-if [ "$EARLY_CODE" = "200" ] && [ "$STORIES_INDEX" != "(no stories yet)" ]; then
+# With no reader request there is provably nothing to continue, so skip the
+# selection model call entirely. This makes surprise generations faster and
+# removes one avoidable provider/rate-limit failure point.
+if [ -n "$PROMPT_TEXT" ] && [ "$EARLY_CODE" = "200" ] && [ "$STORIES_INDEX" != "(no stories yet)" ]; then
   SELECT_PROMPT_FILE="$WORK_DIR/select-prompt.md"
   {
     printf '# Tandem story-selection pass\n\n'
@@ -654,7 +657,7 @@ PROMPT_FILE="$WORK_DIR/prompt.md"
   printf '%s\n' "$STORIES_INDEX"
   if [ -n "$LOADED_STORIES" ]; then
     printf '\n## Stories to continue (full text, loaded for you)\n\n'
-    printf 'The selection step judged these existing stories relevant to the request and loaded their FULL text for you. Continue from them — match the established characters, plot, names, and tone, and write a NEW incident (never a retelling). Keep the same lang_a/lang_b/level as the story you are continuing unless the request explicitly changes them.\n\n'
+    printf 'The selection step judged these existing stories relevant to the request and loaded their FULL text for you. Continue from them — match the established characters, plot, names, and tone, and write a NEW incident (never a retelling). Use the lang_a/lang_b and CEFR level from Generation parameters; those are the reader'"'"'s current choices, even when they differ from the earlier story.\n\n'
     printf '%s\n' "$LOADED_STORIES"
   fi
   printf '\nGenerate the story now. Output ONLY the JSON object described above.\n'

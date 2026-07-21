@@ -6,6 +6,7 @@ import assert from 'node:assert/strict'
 import {
   CEFR_LEVELS,
   STORY_RATINGS,
+  recordFeedback,
   adaptLevel,
   lookupGlossary,
   normalizeStory,
@@ -21,6 +22,30 @@ import {
 // ---------------------------------------------------------------------------
 test('CEFR_LEVELS contains exactly the six canonical levels in order', () => {
   assert.deepEqual(CEFR_LEVELS, ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'])
+})
+
+// ---------------------------------------------------------------------------
+// recordFeedback
+// ---------------------------------------------------------------------------
+test('recordFeedback keeps only the newest verdict for a re-rated story', () => {
+  const history = [
+    { story_id: 'story-a', verdict: 'too_complex', ts: 'old-a' },
+    { story_id: 'story-b', verdict: 'just_right', ts: 'b' },
+    { story_id: 'story-a', verdict: 'just_right', ts: 'newer-a' },
+  ]
+  const next = recordFeedback(history, 'story-a', 'too_simple', 'new-a')
+
+  assert.deepEqual(next, [
+    { story_id: 'story-b', verdict: 'just_right', ts: 'b' },
+    { story_id: 'story-a', verdict: 'too_simple', ts: 'new-a' },
+  ])
+  assert.equal(history.length, 3, 'the source history must stay immutable')
+})
+
+test('recordFeedback tolerates a missing history', () => {
+  assert.deepEqual(recordFeedback(null, 'story-a', 'just_right', 'now'), [
+    { story_id: 'story-a', verdict: 'just_right', ts: 'now' },
+  ])
 })
 
 // ---------------------------------------------------------------------------

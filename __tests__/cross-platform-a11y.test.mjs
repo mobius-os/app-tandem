@@ -109,6 +109,32 @@ test('generate sheet presents reading preferences before the optional story idea
   assert.ok(level < storyIdea)
 })
 
+test('level selectors keep a full-width row instead of a clipped third column', () => {
+  const css = read('theme.js')
+  const generate = read('ui', 'GenerateSheet.jsx')
+  const settings = read('ui', 'SettingsSheet.jsx')
+
+  assert.match(css, /\.tn-gen-grid-wide\s*\{\s*grid-column:\s*1\s*\/\s*-1;/)
+  assert.match(css, /\.tn-settings-field-wide\s*\{\s*grid-column:\s*1\s*\/\s*-1;/)
+  assert.doesNotMatch(css, /minmax\(10[046]px,\s*0\.[57]fr\)/,
+    'the native select must not return to a fixed sliver column')
+  assert.match(generate, /className="tn-gen-grid-wide"[\s\S]*id="tn-gen-level"/)
+  assert.match(settings, /className="tn-settings-field tn-settings-field-wide"[\s\S]*id="tn-settings-level"/)
+})
+
+test('generation waits for server-synced preferences and exposes a retryable error', () => {
+  const generate = read('ui', 'GenerateSheet.jsx')
+  const library = read('ui', 'LibraryTab.jsx')
+
+  const save = library.indexOf('const prefsRes = await savePrefs(appId, token, next)')
+  const synced = library.indexOf('if (!prefsRes?.synced)', save)
+  const start = library.indexOf('await gen.start(', synced)
+  assert.ok(save !== -1 && synced > save && start > synced,
+    'the run must start only after prefs are confirmed on the server')
+  assert.match(generate, /role="alert" aria-live="assertive"/)
+  assert.match(generate, /aria-busy=\{submitting\}/)
+})
+
 test('transient UI states announce and settings avoid incomplete radio semantics', () => {
   const setup = read('ui', 'SetupView.jsx')
   assert.match(setup, /role="alert" aria-live="assertive"/)

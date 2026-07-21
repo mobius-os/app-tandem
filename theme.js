@@ -143,7 +143,7 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 
 /* mobius-ui:Input v1 — keep in sync; library candidate. Diverge below the marker only. */
 .tn-input, .tn-select {
-  display: block; width: 100%; box-sizing: border-box; min-height: 44px; padding: 11px 12px;
+  display: block; width: 100%; min-width: 0; box-sizing: border-box; min-height: 44px; padding: 11px 12px;
   background: var(--surface); color: var(--text); border: 1px solid var(--border);
   border-radius: 8px; outline: none; font-family: var(--font);
   font-size: 16px;
@@ -353,10 +353,14 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 /* Language-toggle pill */
 .tn-lang-toggle {
   display: inline-flex; align-items: center; gap: 4px;
+  max-width: min(42vw, 180px);
   min-height: 44px; padding: 8px 12px; border-radius: 10px;
   border: 1px solid var(--border); background: var(--surface);
   color: var(--text); font-size: 12px; font-weight: 650; cursor: pointer;
   touch-action: manipulation; user-select: none;
+}
+.tn-lang-toggle > span:first-child {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 @media (hover: hover) { .tn-lang-toggle:hover { border-color: var(--accent); } }
 .tn-lang-toggle:active { transform: scale(0.96); }
@@ -601,6 +605,7 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .tn-setup-intro { text-align: center; }
 .tn-full-width { width: 100%; }
 .tn-prompt-hint { margin: 6px 0 0; }
+.tn-level-hint { margin: 6px 0 0; }
 .tn-visually-hidden {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
@@ -619,20 +624,20 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
    follows as a visually separate customization. */
 .tn-gen-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
 }
 .tn-gen-grid-wide { grid-column: 1 / -1; }
-@media (min-width: 520px) {
-  .tn-gen-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(104px, 0.7fr); }
-  .tn-gen-grid-wide { grid-column: auto; }
+@media (min-width: 460px) {
+  .tn-gen-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 }
 .tn-model-fallback-note { margin-top: 8px; }
 .tn-settings-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(96px, 0.55fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
 }
+.tn-settings-field-wide { grid-column: 1 / -1; }
 .tn-settings-field {
   display: flex;
   flex-direction: column;
@@ -644,10 +649,8 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
   font-size: 12px;
   font-weight: 650;
 }
-@media (max-width: 560px) {
-  .tn-settings-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
+@media (min-width: 460px) {
+  .tn-settings-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 }
 
 /* Toasts + destructive button */

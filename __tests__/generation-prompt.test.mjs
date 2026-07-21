@@ -70,6 +70,13 @@ test('system prompt has a Continuing-an-existing-story section (replaces storyli
     'the old per-series continuity line must be gone')
 })
 
+test('continuations honor the learner current language and level controls', () => {
+  assert.match(SYSTEM_PROMPT, /Use the lang_a\/lang_b and CEFR level in Generation parameters/)
+  assert.doesNotMatch(SYSTEM_PROMPT, /Keep the SAME lang_a\/lang_b\/level/)
+  assert.ok(GENERATE_SH.includes('Use the lang_a/lang_b and CEFR level from Generation parameters'),
+    'the generated continuation block must repeat the current-parameters contract')
+})
+
 // v0.11 — two-pass tool-free design. The generation pass has NO file access;
 // the relevant stories' full text is inlined by generate.sh (the selection
 // pass + shell loader), so the system prompt must point at the inlined block,
@@ -187,6 +194,13 @@ test('generate.sh runs a tool-free selection pass that returns relevant_ids', ()
     'the agent runs from a system-prompt-file (prompt in, text out)')
 })
 
+test('blank surprise generations skip the unnecessary selection model pass', () => {
+  assert.ok(
+    GENERATE_SH.includes('if [ -n "$PROMPT_TEXT" ] && [ "$EARLY_CODE" = "200" ]'),
+    'selection should run only when the reader supplied a request that could name a story',
+  )
+})
+
 test('generate.sh validates selected ids against the index and caps the load (security)', () => {
   // An id is loadable only if it is a real story-id (UUID) AND a member of the
   // app's own index — this is what makes an arbitrary out-of-dir path impossible.
@@ -228,4 +242,6 @@ test('generate.sh no longer plumbs the old topic/mode/storyline prompt lines', (
     'the Storyline/series prompt line must be gone')
   assert.ok(!/printf 'Mode: /.test(GENERATE_SH),
     'the Mode: prompt line must be gone')
+  assert.doesNotMatch(SYSTEM_PROMPT, /classic mode/i,
+    'the generation prompt must not refer to the removed structured mode picker')
 })

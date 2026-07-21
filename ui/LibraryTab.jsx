@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { adaptLevel, removeStoryFromIndex, setRatingInIndex, CEFR_LEVELS } from '../story-schema.mjs'
+import { adaptLevel, recordFeedback, removeStoryFromIndex, setRatingInIndex, CEFR_LEVELS } from '../story-schema.mjs'
 import { normalizeGenProvider, normalizeGenModel } from '../gen-model.mjs'
 import { loadStory, savePrefs, putJSON, deleteJSON, GEN_TIMEOUT_MESSAGE } from '../storage.js'
 import { signal, signalError } from '../signals.js'
@@ -91,10 +91,14 @@ export function LibraryTab({ appId, token, online, prefs, onPrefsChange, onSetup
     // is a no-op over the post-delete array), so a rate can't resurrect a
     // deleted story, and a story the server appended mid-rate survives.
     await mutateIndex((fresh) => setRatingInIndex(fresh, story.id, verdict))
-    const history = [...(prefs.feedback_history || [])]
-    // Re-rating the same story replaces its last entry instead of stacking.
-    if (history.length && history[history.length - 1]?.story_id === story.id) history.pop()
-    history.push({ story_id: story.id, verdict, ts: new Date().toISOString() })
+    // Re-rating any story replaces its earlier verdict, even when other stories
+    // were rated in between. Otherwise one story can skew the last-three sample.
+    const history = recordFeedback(
+      prefs.feedback_history,
+      story.id,
+      verdict,
+      new Date().toISOString(),
+    )
     const next = { ...prefs, feedback_history: history }
     onPrefsChange(next)
     const prefsRes = await savePrefs(appId, token, next)
@@ -129,7 +133,6 @@ export function LibraryTab({ appId, token, online, prefs, onPrefsChange, onSetup
   }, [stories, appId, token, handleRate, flashError])
 
   const handleSheetGenerate = useCallback(async ({ prompt, lang_a, lang_b, level }) => {
-    setShowGenerateSheet(false)
     // Persist language/level back to prefs so the next sheet opens with the same
     // defaults, and save next_request so generate.sh picks it up. The free-form
     // prompt is PER-RUN by design: it lives only inside next_request, which
@@ -159,8 +162,18 @@ export function LibraryTab({ appId, token, online, prefs, onPrefsChange, onSetup
       level: updatedLevel,
       next_request: params,
     }
+    const prefsRes = await savePrefs(appId, token, next)
+    // The server-side job reads prefs.json at startup. A queued-only write is
+    // safe for ordinary settings but not here: launching now could generate
+    // with an older language, level, or prompt.
+    if (!prefsRes?.synced) {
+      signalError('Could not sync story settings before generation.', 'generation_prefs')
+      return {
+        ok: false,
+        message: 'Could not sync your story settings. Check your connection and try again.',
+      }
+    }
     onPrefsChange(next)
-    await savePrefs(appId, token, next)
     signal('generation_started', {
       level: updatedLevel,
       target_lang: updatedLangB || '',
@@ -170,7 +183,9 @@ export function LibraryTab({ appId, token, online, prefs, onPrefsChange, onSetup
       has_prompt: Boolean(promptVal),
       library_count: Array.isArray(index) ? index.length : 0,
     })
-    gen.start({ ...params, level: updatedLevel }, index || [])
+    await gen.start({ ...params, level: updatedLevel }, index || [])
+    setShowGenerateSheet(false)
+    return { ok: true }
   }, [appId, token, prefs, onPrefsChange, gen, index])
 
   const confirmDelete = useCallback(async () => {
@@ -208,7 +223,6 @@ export function LibraryTab({ appId, token, online, prefs, onPrefsChange, onSetup
 
   const handleRetry = useCallback(async () => {
     const params = gen.params || {}
-    await gen.dismiss()
     // Restore next_request — generate.sh clears it after each run, so a
     // retry without this would fall back to the prefs defaults.
     if (params.lang_a && params.lang_b) {
@@ -225,11 +239,17 @@ export function LibraryTab({ appId, token, online, prefs, onPrefsChange, onSetup
           ...(params.model ? { model: params.model } : {}),
         },
       }
+      const prefsRes = await savePrefs(appId, token, next)
+      if (!prefsRes?.synced) {
+        flashError('Could not sync story settings. Check your connection and retry.')
+        signalError('Could not sync story settings before retry.', 'generation_retry_prefs')
+        return
+      }
       onPrefsChange(next)
-      await savePrefs(appId, token, next)
     }
-    gen.start(params, index || [])
-  }, [gen, prefs, onPrefsChange, appId, token, index])
+    await gen.dismiss()
+    await gen.start(params, index || [])
+  }, [gen, prefs, onPrefsChange, appId, token, index, flashError])
 
   // Show first-run setup if no prefs are set.
   const needsSetup = !prefs.lang_a || !prefs.lang_b
