@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { ArrowLeft } from '@openai/apps-sdk-ui/components/Icon'
 import { stripWordPunct, buildAlignedContext } from '../text-align.mjs'
 import { lookupGlossary } from '../story-schema.mjs'
 import { computeParaOffsets, computeSyncScrollTop, computeProportionalScrollTop, clampScrollTargetToView } from '../scroll-sync.mjs'
@@ -350,7 +351,7 @@ export function StoryReader({ story, onClose, onRate }) {
     <div className="tn-reader">
       <div className="tn-reader-bar">
         <button type="button" className="tn-reader-back" onClick={onClose}
-          aria-label="Back to story list">← Back</button>
+          aria-label="Back to story list"><ArrowLeft aria-hidden="true" /> Back</button>
         <div className="tn-reader-title-wrap">
           <div className="tn-reader-title">{bLead ? story.title_b : story.title_a}</div>
           <div className="tn-reader-subtitle">{langA} / {langB} · {story.level}</div>
