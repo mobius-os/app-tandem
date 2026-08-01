@@ -331,6 +331,7 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
   background: var(--surface); flex-shrink: 0;
 }
 .tn-reader-back {
+  display: inline-flex; align-items: center; gap: 5px;
   min-height: 44px; padding: 7px 12px; border-radius: 9px;
   border: 1px solid var(--border); background: var(--bg);
   color: var(--text); font-size: 13px; font-weight: 650;
