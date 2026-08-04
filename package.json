@@ -2,7 +2,5 @@
   "scripts": {
     "test": "node --test __tests__/*.mjs"
   },
-  "devDependencies": {
-    "esbuild": "^0.25.0"
-  }
+  "devDependencies": {}
 }

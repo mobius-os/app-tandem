@@ -68,12 +68,10 @@ Security model: the service token is held by `generate.sh` and never exposed to 
 npm test
 
 # Compile smoke (must pass before shipping)
-npx esbuild index.jsx \
-  --bundle \
-  --packages=external \
-  --format=esm \
-  --loader:.js=jsx \
-  --log-level=warning \
+npx rolldown index.jsx \
+  --platform browser \
+  --format esm \
+  --dir .rolldown-smoke \
   --outfile=/dev/null
 
 # Install in a running Möbius test instance
