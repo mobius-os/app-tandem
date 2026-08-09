@@ -136,7 +136,7 @@ export default function App({ appId, token }) {
               alt=""
               width={34}
               height={34}
-              className="tn-brand-icon"
+              className="tn-brand-icon" ref={(el) => el && window.mobius.immersive && window.mobius.immersive.holdToToggle(el)}
               onError={() => setIconFailed(true)}
             />
           )}
