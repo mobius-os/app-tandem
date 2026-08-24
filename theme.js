@@ -10,6 +10,10 @@ export const CSS = `
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
 }
+.tn-library-shell {
+  flex: 1; min-width: 0; min-height: 0; width: 100%; max-width: 720px;
+  margin-inline: auto; display: flex; flex-direction: column; overflow: hidden;
+}
 .tn-scroll {
   flex: 1; min-height: 0;
   overflow-y: auto; overflow-x: hidden;
