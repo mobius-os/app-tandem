@@ -48,11 +48,13 @@ export const CSS = `
 
 /* mobius-ui:Header v1 — keep in sync; library candidate. Diverge below the marker only. */
 .tn-header {
-  flex: 0 0 auto;
+  flex: 0 0 auto; width: 100%; background: var(--bg); border-bottom: 1px solid var(--border);
+}
+.tn-header-inner {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  width: 100%; max-width: 720px; margin-inline: auto;
   min-height: 48px;
   padding: max(12px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) 12px max(16px, env(safe-area-inset-left, 0px));
-  background: var(--surface); border-bottom: 1px solid var(--border);
 }
 .tn-brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
 /* Brand mark = the real app icon, downscaled + cached server-side. */
@@ -729,4 +731,19 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
   background: color-mix(in srgb, var(--danger) 8%, transparent);
 }
 
+
+/* mobius-ui:CenteredRail v1 */
+@media (min-width: 900px) {
+  .tn-root {
+    background:
+      linear-gradient(var(--bg), var(--bg)) center / min(100%, 720px) 100% no-repeat,
+      radial-gradient(ellipse 76% 112% at 50% 46%,
+        color-mix(in srgb, var(--accent) 18%, var(--bg)) 0%,
+        color-mix(in srgb, var(--accent) 7%, var(--bg)) 46%,
+        color-mix(in srgb, var(--text) 2%, var(--bg)) 100%);
+
+  }
+  .tn-header { width: min(100%, 720px); margin-inline: auto; }
+}
+/* /mobius-ui:CenteredRail */
 `
