@@ -10,6 +10,10 @@ export const CSS = `
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
 }
+.tn-library-shell {
+  flex: 1; min-width: 0; min-height: 0; width: 100%; max-width: 720px;
+  margin-inline: auto; display: flex; flex-direction: column; overflow: hidden;
+}
 .tn-scroll {
   flex: 1; min-height: 0;
   overflow-y: auto; overflow-x: hidden;
@@ -44,11 +48,13 @@ export const CSS = `
 
 /* mobius-ui:Header v1 — keep in sync; library candidate. Diverge below the marker only. */
 .tn-header {
-  flex: 0 0 auto;
+  flex: 0 0 auto; width: 100%; background: var(--bg); border-bottom: 1px solid var(--border);
+}
+.tn-header-inner {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  width: 100%; max-width: 760px; margin-inline: auto;
   min-height: 48px;
   padding: max(12px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) 12px max(16px, env(safe-area-inset-left, 0px));
-  background: var(--surface); border-bottom: 1px solid var(--border);
 }
 .tn-brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
 /* Brand mark = the real app icon, downscaled + cached server-side. */
@@ -725,4 +731,13 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
   background: color-mix(in srgb, var(--danger) 8%, transparent);
 }
 
+
+/* mobius-ui:CenteredRail v1 */
+@media (min-width: 900px) {
+  .tn-root {
+
+  }
+  .tn-header { width: min(100%, 760px); margin-inline: auto; }
+}
+/* /mobius-ui:CenteredRail */
 `

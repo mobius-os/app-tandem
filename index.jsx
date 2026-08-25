@@ -125,6 +125,7 @@ export default function App({ appId, token }) {
     <div className="tn-root">
       <style>{CSS}</style>
       <header className="tn-header">
+        <div className="tn-header-inner">
         {/* Brand mark = the real glossy app icon plus the name + tagline below.
             The icon is downscaled + cached server-side (?size=64); onError hides
             the broken img and reveals the accent-dot fallback for installs with
@@ -136,7 +137,7 @@ export default function App({ appId, token }) {
               alt=""
               width={34}
               height={34}
-              className="tn-brand-icon" ref={(el) => el && window.mobius.immersive && window.mobius.immersive.holdToToggle(el)}
+              className="tn-brand-icon"
               onError={() => setIconFailed(true)}
             />
           )}
@@ -159,21 +160,24 @@ export default function App({ appId, token }) {
             {GearIcon}
           </button>
         </div>
+        </div>
       </header>
 
-      <div className="tn-scroll">
-        <LibraryTab
-          appId={appId}
-          token={token}
-          online={online}
-          prefs={prefs}
-          onPrefsChange={setPrefs}
-          onSetupComplete={() => markSetupComplete(appId)}
-          index={index}
-          onIndexChange={setIndex}
-          mutateIndex={mutateIndex}
-          gen={gen}
-        />
+      <div className="tn-library-shell">
+        <div className="tn-scroll">
+          <LibraryTab
+            appId={appId}
+            token={token}
+            online={online}
+            prefs={prefs}
+            onPrefsChange={setPrefs}
+            onSetupComplete={() => markSetupComplete(appId)}
+            index={index}
+            onIndexChange={setIndex}
+            mutateIndex={mutateIndex}
+            gen={gen}
+          />
+        </div>
       </div>
 
       {showSettings && (
