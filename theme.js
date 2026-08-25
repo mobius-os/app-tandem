@@ -52,7 +52,7 @@ export const CSS = `
 }
 .tn-header-inner {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  width: 100%; max-width: 720px; margin-inline: auto;
+  width: 100%; max-width: 760px; margin-inline: auto;
   min-height: 48px;
   padding: max(12px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) 12px max(16px, env(safe-area-inset-left, 0px));
 }
@@ -735,15 +735,9 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 /* mobius-ui:CenteredRail v1 */
 @media (min-width: 900px) {
   .tn-root {
-    background:
-      linear-gradient(var(--bg), var(--bg)) center / min(100%, 720px) 100% no-repeat,
-      radial-gradient(ellipse 76% 112% at 50% 46%,
-        color-mix(in srgb, var(--accent) 18%, var(--bg)) 0%,
-        color-mix(in srgb, var(--accent) 7%, var(--bg)) 46%,
-        color-mix(in srgb, var(--text) 2%, var(--bg)) 100%);
 
   }
-  .tn-header { width: min(100%, 720px); margin-inline: auto; }
+  .tn-header { width: min(100%, 760px); margin-inline: auto; }
 }
 /* /mobius-ui:CenteredRail */
 `
