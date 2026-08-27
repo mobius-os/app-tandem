@@ -51,11 +51,16 @@ export const CSS = `
   flex: 0 0 auto; width: 100%; background: var(--bg);
 }
 .tn-header-inner {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  position: relative; display: flex; align-items: center; justify-content: space-between; gap: 12px;
   width: 100%; max-width: 760px; margin-inline: auto;
   min-height: 48px;
   padding: max(12px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) 12px max(16px, env(safe-area-inset-left, 0px));
-  border-bottom: 1px solid var(--border);
+}
+.tn-header-inner::after {
+  content: ''; position: absolute;
+  left: max(16px, env(safe-area-inset-left, 0px));
+  right: max(16px, env(safe-area-inset-right, 0px)); bottom: 0;
+  height: 1px; background: var(--border);
 }
 .tn-brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
 /* Brand mark = the real app icon, downscaled + cached server-side. */
