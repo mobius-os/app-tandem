@@ -10,10 +10,8 @@ import {
   MAX_SPLIT_RATIO,
   STACKED_SPLIT_RATIO_KEY,
   WIDE_SPLIT_RATIO_KEY,
-  PREVIOUS_SPLIT_RATIO_KEY,
-  LEGACY_SPLIT_RATIO_KEY,
   clampSplitRatio,
-  resolveInitialSplitRatios,
+  migrateLegacySplitRatio,
   isFirstPaneTapped,
   getLookupCardPlacement,
 } from '../reader-layout.mjs'
@@ -24,16 +22,9 @@ const SPLIT_KEY_LARGE_STEP = 0.1
 const WIDE_READER_QUERY = '(min-width: 720px)'
 
 function readInitialSplitRatios() {
-  const stored = {}
-  for (const key of [
-    STACKED_SPLIT_RATIO_KEY,
-    WIDE_SPLIT_RATIO_KEY,
-    PREVIOUS_SPLIT_RATIO_KEY,
-    LEGACY_SPLIT_RATIO_KEY,
-  ]) {
-    try { stored[key] = localStorage.getItem(key) } catch {}
+  try { return migrateLegacySplitRatio(localStorage) } catch {
+    return migrateLegacySplitRatio(null)
   }
-  return resolveInitialSplitRatios(stored)
 }
 
 function readInitialWideReader() {
