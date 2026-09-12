@@ -11,6 +11,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { normalizeStory } from './story-schema.mjs'
 import { signal, signalError } from './signals.js'
+import { migratePendingGeneration } from './gen-model.mjs'
 
 export function getRuntimeStorage() {
   return (typeof window !== 'undefined' && window.mobius?.storage) || null
@@ -290,7 +291,9 @@ export function useGeneration({ appId, token, onStoryReady }) {
       const res = await getJSON(pendingUrl(appId), token, appId)
       if (cancelled) return
       if (res.ok && res.data && typeof res.data === 'object' && res.data.started_at) {
-        beginPolling(res.data)
+        const pending = migratePendingGeneration(res.data)
+        if (pending !== res.data) putJSON(pendingUrl(appId), token, pending, appId).catch(() => {})
+        beginPolling(pending)
       }
     })()
     return () => {
