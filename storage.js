@@ -126,7 +126,7 @@ export async function savePrefs(appId, token, prefs) {
 // Provider/model registry for the settings sheet — platform routes (NOT app
 // storage), so they go through fetch directly. Mirrors app-news:
 //   - GET /api/auth/providers/models → { claude: [{id,name}], codex: [...] }
-//   - GET /api/auth/providers/status → { claude: {authenticated}, ... }
+//   - GET /api/auth/providers/status → { claude: {configured}, ... }
 // Each returns null on ANY failure; the sheet then degrades (fallback groups,
 // "show everything as connected") and generation proceeds unblocked — this
 // preference must never gate the app.

@@ -38,6 +38,14 @@ test('online state subscribes to Mobius runtime reachability when present', () =
   assert.doesNotMatch(storage, /window\.mobius\.onChange/, 'old generic runtime change hook is not the online API')
 })
 
+test('settings follows the canonical configured provider status', () => {
+  const settings = read('ui', 'SettingsSheet.jsx')
+  const storage = read('storage.js')
+  assert.match(settings, /\.filter\(\(\[, v\]\) => v && v\.configured\)/)
+  assert.doesNotMatch(settings, /\bv\.authenticated\b/)
+  assert.match(storage, /providers\/status → \{ claude: \{configured\}/)
+})
+
 test('fixed bars and sheets account for standalone PWA safe areas', () => {
   const css = read('theme.js')
   assert.match(css, /\.tn-header[\s\S]*env\(safe-area-inset-top/)
