@@ -54,6 +54,14 @@ export const DEFAULT_PROVIDER = ''
 export const CONCRETE_DEFAULT_PROVIDER = FALLBACK_GROUPS[0].key
 export const CONCRETE_DEFAULT_MODEL_ID = FALLBACK_GROUPS[0].models[0].id
 
+export const RETIRED_MODEL_IDS = Object.freeze({
+  'claude-opus-4-5-20251001': 'claude-opus-4-5-20251101',
+  'claude-sonnet-4-5-20251001': 'claude-sonnet-4-5-20250929',
+  'claude-opus-4-6-20251015': 'claude-opus-4-6',
+  'claude-opus-4-7-20251215': 'claude-opus-4-7',
+  'claude-sonnet-4-7-20251215': 'claude-sonnet-4-6',
+})
+
 // True when prefs carry NO usable generation selection — the old "Default"
 // state: a missing/empty/whitespace model, or the literal label sentinel
 // 'Default' (case-insensitive) in case any install ever stored it verbatim.
@@ -71,12 +79,35 @@ export function needsGenPrefsMigration(prefs) {
 // identity check to decide whether to persist. Never throws on bad input.
 export function migrateGenPrefs(prefs) {
   if (!prefs || typeof prefs !== 'object') return prefs
-  if (!needsGenPrefsMigration(prefs)) return prefs
-  return {
-    ...prefs,
-    gen_provider: CONCRETE_DEFAULT_PROVIDER,
-    gen_model: CONCRETE_DEFAULT_MODEL_ID,
+  let migrated = prefs
+  if (needsGenPrefsMigration(prefs)) {
+    migrated = {
+      ...prefs,
+      gen_provider: CONCRETE_DEFAULT_PROVIDER,
+      gen_model: CONCRETE_DEFAULT_MODEL_ID,
+    }
+  } else if (RETIRED_MODEL_IDS[prefs.gen_model]) {
+    migrated = { ...prefs, gen_model: RETIRED_MODEL_IDS[prefs.gen_model] }
   }
+  const request = prefs.next_request
+  const requestModel = request && typeof request === 'object'
+    ? RETIRED_MODEL_IDS[request.model]
+    : null
+  if (requestModel) {
+    if (migrated === prefs) migrated = { ...prefs }
+    migrated.next_request = { ...request, model: requestModel }
+  }
+  return migrated
+}
+
+export function migratePendingGeneration(pending) {
+  if (!pending || typeof pending !== 'object' || Array.isArray(pending)) return pending
+  const params = pending.params
+  if (!params || typeof params !== 'object' || Array.isArray(params)) return pending
+  const replacement = RETIRED_MODEL_IDS[params.model]
+  return replacement
+    ? { ...pending, params: { ...params, model: replacement } }
+    : pending
 }
 
 // Reads the chosen generation provider out of prefs. Lenient by contract:

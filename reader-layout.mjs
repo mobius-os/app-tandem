@@ -39,6 +39,27 @@ export function resolveInitialSplitRatios(stored = {}) {
   }
 }
 
+export function migrateLegacySplitRatio(storage) {
+  if (!storage) return resolveInitialSplitRatios()
+  const stored = {}
+  for (const key of [
+    STACKED_SPLIT_RATIO_KEY,
+    WIDE_SPLIT_RATIO_KEY,
+    PREVIOUS_SPLIT_RATIO_KEY,
+    LEGACY_SPLIT_RATIO_KEY,
+  ]) {
+    try { stored[key] = storage.getItem(key) } catch {}
+  }
+  const resolved = resolveInitialSplitRatios(stored)
+  const hasCurrent = parseSplitRatio(stored[STACKED_SPLIT_RATIO_KEY]) !== null
+  const hasExactLegacyKey = stored[PREVIOUS_SPLIT_RATIO_KEY] !== null
+    || stored[LEGACY_SPLIT_RATIO_KEY] !== null
+  if (!hasCurrent && hasExactLegacyKey) {
+    try { storage.setItem(STACKED_SPLIT_RATIO_KEY, String(resolved.stacked)) } catch {}
+  }
+  return resolved
+}
+
 export function isFirstPaneTapped(lang, bLead) {
   return (lang === 'a' && !bLead) || (lang === 'b' && bLead)
 }

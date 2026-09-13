@@ -11,6 +11,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { normalizeStory } from './story-schema.mjs'
 import { signal, signalError } from './signals.js'
+import { migratePendingGeneration } from './gen-model.mjs'
 
 export function getRuntimeStorage() {
   return (typeof window !== 'undefined' && window.mobius?.storage) || null
@@ -126,7 +127,7 @@ export async function savePrefs(appId, token, prefs) {
 // Provider/model registry for the settings sheet — platform routes (NOT app
 // storage), so they go through fetch directly. Mirrors app-news:
 //   - GET /api/auth/providers/models → { claude: [{id,name}], codex: [...] }
-//   - GET /api/auth/providers/status → { claude: {authenticated}, ... }
+//   - GET /api/auth/providers/status → { claude: {configured}, ... }
 // Each returns null on ANY failure; the sheet then degrades (fallback groups,
 // "show everything as connected") and generation proceeds unblocked — this
 // preference must never gate the app.
@@ -290,7 +291,9 @@ export function useGeneration({ appId, token, onStoryReady }) {
       const res = await getJSON(pendingUrl(appId), token, appId)
       if (cancelled) return
       if (res.ok && res.data && typeof res.data === 'object' && res.data.started_at) {
-        beginPolling(res.data)
+        const pending = migratePendingGeneration(res.data)
+        if (pending !== res.data) putJSON(pendingUrl(appId), token, pending, appId).catch(() => {})
+        beginPolling(pending)
       }
     })()
     return () => {

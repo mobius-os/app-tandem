@@ -179,6 +179,16 @@ PREFS_FILE="$WORK_DIR/prefs.json"
 PREFS_CODE=$(curl -sS -o "$PREFS_FILE" -w "%{http_code}" \
   -H "Authorization: Bearer $SERVICE_TOKEN" \
   "$API_BASE_URL/api/storage/apps/$APP_ID/prefs.json") || PREFS_CODE=000
+if [ "$PREFS_CODE" = "200" ] && [ "$(python3 "$SCRIPT_DIR/model_selection.py" "$PREFS_FILE")" = "changed" ]; then
+  PREFS_MIGRATION_CODE=$(curl -sS -o /dev/null -w "%{http_code}" \
+    -X PUT "$API_BASE_URL/api/storage/apps/$APP_ID/prefs.json" \
+    -H "Authorization: Bearer $SERVICE_TOKEN" \
+    -H "Content-Type: application/json" \
+    --data-binary @"$PREFS_FILE") || PREFS_MIGRATION_CODE=000
+  if [ "$PREFS_MIGRATION_CODE" != "200" ] && [ "$PREFS_MIGRATION_CODE" != "201" ] && [ "$PREFS_MIGRATION_CODE" != "204" ]; then
+    log "WARN: model selection migrated for this run but could not be persisted (HTTP $PREFS_MIGRATION_CODE)"
+  fi
+fi
 
 # Parse prefs; fall back to English/Spanish B1 defaults.
 # Output tab-separated fields (one per line via a NUL-safe scheme would be

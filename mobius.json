@@ -19,6 +19,7 @@
     "story-schema.mjs",
     "text-align.mjs",
     "gen-model.mjs",
+    "model_selection.py",
     "scroll-sync.mjs",
     "reader-layout.mjs",
     "constants.js",

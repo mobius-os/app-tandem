@@ -9,6 +9,7 @@ import {
   LEGACY_SPLIT_RATIO_KEY,
   clampSplitRatio,
   resolveInitialSplitRatios,
+  migrateLegacySplitRatio,
   isFirstPaneTapped,
   getLookupCardPlacement,
 } from '../reader-layout.mjs'
@@ -39,6 +40,42 @@ test('legacy near-half defaults are ignored while deliberate drags migrate to st
     DEFAULT_STACKED_SPLIT_RATIO,
   )
   assert.equal(resolveInitialSplitRatios({ [LEGACY_SPLIT_RATIO_KEY]: '0.72' }).stacked, 0.72)
+})
+
+test('the exact old localStorage keys copy to the app-owned stacked key once', () => {
+  for (const [legacyKey, value, expected] of [
+    [PREVIOUS_SPLIT_RATIO_KEY, '0.67', 0.67],
+    [LEGACY_SPLIT_RATIO_KEY, '0.72', 0.72],
+    [LEGACY_SPLIT_RATIO_KEY, '0.5', DEFAULT_STACKED_SPLIT_RATIO],
+  ]) {
+    const values = new Map([[legacyKey, value]])
+    const writes = []
+    const storage = {
+      getItem: (key) => values.has(key) ? values.get(key) : null,
+      setItem: (key, next) => { writes.push([key, next]); values.set(key, next) },
+    }
+    assert.equal(migrateLegacySplitRatio(storage).stacked, expected)
+    assert.equal(migrateLegacySplitRatio(storage).stacked, expected)
+    assert.deepEqual(writes, [[STACKED_SPLIT_RATIO_KEY, String(expected)]])
+  }
+})
+
+test('current split ratios never consult a guessed or numeric app key', () => {
+  const reads = []
+  const storage = {
+    getItem: (key) => {
+      reads.push(key)
+      return key === STACKED_SPLIT_RATIO_KEY ? '0.63' : null
+    },
+    setItem: () => assert.fail('current value must not be rewritten'),
+  }
+  assert.equal(migrateLegacySplitRatio(storage).stacked, 0.63)
+  assert.deepEqual(new Set(reads), new Set([
+    STACKED_SPLIT_RATIO_KEY,
+    WIDE_SPLIT_RATIO_KEY,
+    PREVIOUS_SPLIT_RATIO_KEY,
+    LEGACY_SPLIT_RATIO_KEY,
+  ]))
 })
 
 test('split ratio clamps retain the existing resize bounds', () => {

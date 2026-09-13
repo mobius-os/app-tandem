@@ -32,7 +32,7 @@ export function SettingsSheet({ appId, token, prefs, onPrefsChange, onSelectMode
   // showing; surface a soft hint).
   const [modelsFailed, setModelsFailed] = useState(false)
   // null = treat everything as connected (status fetch failed / older mobius);
-  // otherwise a Set of authenticated provider ids.
+  // otherwise a Set of configured provider ids.
   const [connectedProviders, setConnectedProviders] = useState(null)
 
   useEffect(() => {
@@ -50,7 +50,7 @@ export function SettingsSheet({ appId, token, prefs, onPrefsChange, onSelectMode
       if (status && typeof status === 'object') {
         setConnectedProviders(new Set(
           Object.entries(status)
-            .filter(([, v]) => v && v.authenticated)
+            .filter(([, v]) => v && v.configured)
             .map(([k]) => k),
         ))
       }

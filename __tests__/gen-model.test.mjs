@@ -17,6 +17,8 @@ import {
   normalizeGenModel,
   needsGenPrefsMigration,
   migrateGenPrefs,
+  RETIRED_MODEL_IDS,
+  migratePendingGeneration,
   buildProviderGroups,
 } from '../gen-model.mjs'
 
@@ -129,6 +131,49 @@ test('migrateGenPrefs is idempotent and identity-stable for a real selection', (
   // Running it again on an already-migrated object is a no-op.
   const once = migrateGenPrefs({})
   assert.equal(migrateGenPrefs(once), once)
+})
+
+test('migrateGenPrefs maps only retired stored and pending model ids', () => {
+  for (const [retired, current] of Object.entries(RETIRED_MODEL_IDS)) {
+    const source = {
+      gen_provider: 'claude',
+      gen_model: retired,
+      next_request: { provider: 'claude', model: retired, prompt: 'continue' },
+      keep: 7,
+    }
+    const migrated = migrateGenPrefs(source)
+    assert.equal(migrated.gen_model, current)
+    assert.equal(migrated.next_request.model, current)
+    assert.equal(migrated.next_request.prompt, 'continue')
+    assert.equal(migrated.keep, 7)
+    assert.equal(migrateGenPrefs(migrated), migrated)
+  }
+  const unknown = {
+    gen_provider: 'claude', gen_model: 'future-model',
+    next_request: { model: 'gpt-5.5' },
+  }
+  assert.equal(migrateGenPrefs(unknown), unknown)
+})
+
+test('scheduled generation migrates prefs before resolving the pending request', () => {
+  assert.ok(GENERATE_SH.includes('model_selection.py" "$PREFS_FILE"'))
+  assert.ok(GENERATE_SH.indexOf('model_selection.py" "$PREFS_FILE"') < GENERATE_SH.indexOf('PARAMS=$(python3'))
+})
+
+test('a resumed pending generation migrates the retry model exactly once', () => {
+  const pending = {
+    started_at: '2026-09-12T12:00:00Z',
+    params: { model: 'claude-opus-4-7-20251215', prompt: 'continue' },
+    known_ids: ['one'],
+  }
+  const migrated = migratePendingGeneration(pending)
+  assert.deepEqual(migrated, {
+    ...pending,
+    params: { model: 'claude-opus-4-7', prompt: 'continue' },
+  })
+  assert.equal(migratePendingGeneration(migrated), migrated)
+  const unknown = { params: { model: 'future-model' } }
+  assert.equal(migratePendingGeneration(unknown), unknown)
 })
 
 test('migrateGenPrefs never throws on bad input (returns it unchanged)', () => {
