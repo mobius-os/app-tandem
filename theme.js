@@ -146,7 +146,7 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .tn-btn:disabled { opacity: 0.5; cursor: default; transform: none; }
 .tn-btn-primary { background: var(--accent-hover, var(--accent)); border-color: var(--accent-hover, var(--accent)); color: var(--accent-fg); }
 @media (hover: hover) { .tn-btn-primary:hover { filter: brightness(0.94); } }
-.tn-btn-secondary { background: var(--surface2, var(--surface)); }
+.tn-btn-secondary { background: var(--surface-2, var(--surface)); }
 @media (hover: hover) { .tn-btn-secondary:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); } }
 .tn-btn-ghost { background: transparent; border-color: transparent; color: var(--accent); }
 @media (hover: hover) { .tn-btn-ghost:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); } }
