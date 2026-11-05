@@ -308,6 +308,7 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .tn-card-row { display: flex; align-items: center; gap: 14px; min-width: 0; width: 100%; }
 .tn-card-rate-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .tn-card-rating {
+  display: inline-flex; align-items: center; gap: 6px;
   min-height: 44px; padding: 9px 12px; border-radius: 10px;
   border: 1px solid var(--border); background: transparent;
   color: var(--muted); font-size: 12px; font-weight: 600;
@@ -316,6 +317,7 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 }
 @media (hover: hover) { .tn-card-rating:hover { border-color: var(--accent); color: var(--text); } }
 .tn-card-rating:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.tn-card-rating-icon { flex: 0 0 auto; width: 14px; height: 14px; }
 .tn-offline-banner {
   margin: 0 0 12px; padding: 8px 12px; border-radius: 8px;
   background: var(--accent-dim, color-mix(in srgb, var(--accent) 12%, transparent));
@@ -378,7 +380,7 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 @media (hover: hover) { .tn-lang-toggle:hover { border-color: var(--accent); } }
 .tn-lang-toggle:active { transform: scale(0.96); }
 .tn-lang-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.tn-lang-toggle-arrow { color: var(--muted); font-size: 10px; }
+.tn-lang-toggle-arrow { flex: 0 0 auto; width: 14px; height: 14px; color: var(--muted); }
 
 /* Split-pane reader */
 .tn-reader-body {
@@ -523,7 +525,7 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .tn-lookup-source {
   color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis;
 }
-.tn-lookup-arrow { color: var(--accent); font-weight: 800; }
+.tn-lookup-arrow { flex: 0 0 auto; width: 16px; height: 16px; color: var(--accent-text, var(--accent)); align-self: center; }
 .tn-lookup-target {
   color: var(--text); font-weight: 760; min-width: 0;
   overflow: hidden; text-overflow: ellipsis;
@@ -721,7 +723,7 @@ button.tn-card:focus-visible { outline: 2px solid var(--accent); outline-offset:
   font-size: 12px; font-weight: 500; color: var(--muted); font-family: var(--mono, monospace);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.tn-model-check { flex: 0 0 auto; color: var(--accent); font-weight: 700; }
+.tn-model-check { flex: 0 0 auto; width: 18px; height: 18px; color: var(--accent-text, var(--accent)); }
 .tn-model-loading { display: flex; justify-content: center; padding: 16px 0; }
 .tn-spinner-sm { width: 20px; height: 20px; border-width: 2px; flex: 0 0 auto; }
 

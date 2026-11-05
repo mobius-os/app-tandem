@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { Check } from '@openai/apps-sdk-ui/components/Icon'
 import { FALLBACK_GROUPS, normalizeGenProvider, normalizeGenModel, buildProviderGroups } from '../gen-model.mjs'
 import { loadProviderModels, loadProviderStatus, savePrefs } from '../storage.js'
 import { signalError } from '../signals.js'
@@ -209,7 +210,7 @@ export function SettingsSheet({ appId, token, prefs, onPrefsChange, onSelectMode
                             <span className="tn-model-row-title">{m.name}</span>
                             <span className="tn-model-row-sub">{m.id}</span>
                           </div>
-                          {on && <span className="tn-model-check" aria-hidden="true">✓</span>}
+                          {on && <Check className="tn-model-check" aria-hidden="true" />}
                         </button>
                       )
                     })}

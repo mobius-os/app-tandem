@@ -9,6 +9,7 @@ import { GenerateSheet } from './GenerateSheet.jsx'
 import { DeleteConfirmModal } from './DeleteConfirmModal.jsx'
 import { SetupView } from './SetupView.jsx'
 import { TrashIcon } from './Icons.jsx'
+import { EditPencil } from '@openai/apps-sdk-ui/components/Icon'
 
 // ---------------------------------------------------------------------------
 // LibraryTab — story list + generate button. The story index and the
@@ -398,7 +399,7 @@ export function LibraryTab({ appId, token, online, prefs, onPrefsChange, onSetup
                       onClick={() => setRateEditId(entry.id)}
                       aria-label={`Change difficulty rating (currently ${RATE_LABELS[effRating] || effRating})`}
                     >
-                      {RATE_LABELS[effRating] || effRating} <span aria-hidden="true">✎</span>
+                      {RATE_LABELS[effRating] || effRating} <EditPencil className="tn-card-rating-icon" aria-hidden="true" />
                     </button>
                   )}
                 </div>

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { ArrowLeft } from '@openai/apps-sdk-ui/components/Icon'
+import { ArrowLeft, ArrowRightSm, CompareArrows } from '@openai/apps-sdk-ui/components/Icon'
 import { stripWordPunct, buildAlignedContext } from '../text-align.mjs'
 import { lookupGlossary } from '../story-schema.mjs'
 import { computeParaOffsets, computeSyncScrollTop, computeProportionalScrollTop, clampScrollTargetToView } from '../scroll-sync.mjs'
@@ -356,7 +356,7 @@ export function StoryReader({ story, onClose, onRate }) {
             title="Swap which language leads"
           >
             <span>{bLead ? langB : langA}</span>
-            <span className="tn-lang-toggle-arrow" aria-hidden="true">⇄</span>
+            <CompareArrows className="tn-lang-toggle-arrow" aria-hidden="true" />
           </button>
         </div>
       </div>
@@ -461,7 +461,7 @@ export function StoryReader({ story, onClose, onRate }) {
                 <span className="tn-lookup-source">{highlight.sourceTerm}</span>
                 {highlight.otherWord && (
                   <>
-                    <span className="tn-lookup-arrow" aria-hidden="true">→</span>
+                    <ArrowRightSm className="tn-lookup-arrow" aria-hidden="true" />
                     <span className="tn-lookup-target">{highlight.otherWord}</span>
                   </>
                 )}
